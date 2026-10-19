@@ -1,0 +1,53 @@
+name: daily-data
+
+on:
+  schedule:
+    # 16:30 與 18:30 Asia/Taipei。資料若尚未出來，今天不會被記成休市。
+    - cron: "30 8 * * 1-5"
+    - cron: "30 10 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "回補起始日 YYYYMMDD，空白則只補最近缺少的交易日"
+        required: false
+        default: ""
+      end:
+        description: "回補結束日 YYYYMMDD"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-data
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch and publish
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.start }}" ]; then
+            python3 pipeline/backfill.py --start "${{ github.event.inputs.start }}" --end "${{ github.event.inputs.end }}" --sleep 3
+          else
+            python3 pipeline/daily.py
+          fi
+      - name: Refresh offline sample and commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 pipeline/make_sample.py || true
+          git add data docs app/src/main/assets/sample/window.json
+          if git diff --staged --quiet; then
+            echo "沒有新資料"
+          else
+            git commit -m "data: 更新收盤行情與箱型清單"
+            git push
+          fi
