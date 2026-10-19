@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,7 +54,19 @@ def main() -> int:
         if key in completed or key in closed:
             continue
         print(f"[backfill] ({index}/{len(days)}) {key}", flush=True)
-        status, rows = fetch_day(client, key, allow_openapi_fallback=False, tpex_client=tpex_client)
+        # SMCPKG_SUPPORT>>>CursorXXX
+        # status, rows = fetch_day(client, key, allow_openapi_fallback=False, tpex_client=tpex_client)
+        status, rows = "error", []
+        for attempt in range(3):
+            try:
+                status, rows = fetch_day(client, key, allow_openapi_fallback=False, tpex_client=tpex_client)
+                break
+            except Exception as exc:  # noqa: BLE001 — 斷線留到下一輪，已入庫的日期不會重抓
+                print(f"[backfill] {key} 下載例外：{exc}", flush=True)
+                if attempt == 2:
+                    return 1
+                time.sleep(20)
+        # SMCPKG_SUPPORT<<<CursorYYY
         if status == "ok":
             append_day(ROOT, int(key), rows)
             completed.add(key)
