@@ -56,13 +56,15 @@ App 的預設網址是 `https://raw.githubusercontent.com/apsmkimo/tw-box-radar/
 
 ## 目前已入庫的歷史
 
-這份資料是 **2023-10-16 到 2025-04-01**，353 個有行情的平日、約 1900 檔普通股。箱型與大約一年半的回測已經夠用。還沒到三年：上櫃每天的檔案約 1.5MB，連線常被截斷，同一輪抓到 2026-10 還要數小時。已完成的日期會略過，接下去跑：
+這份資料是 **2023-10-16 到 2026-10-19**，731 個有行情的平日、55 個休市平日、2011 檔普通股。其中 1690 檔因除權息而與成交價不同。2026-10-19、預設參數：16 檔突破箱頂、529 檔整理、299 檔接近箱底。`manifest.json` 的 `historyStart` / `asOf` 是實際範圍。
+
+之後的交易日由每日排程補上。若要手動把缺的日期補齊：
 
 ```bash
-python3 pipeline/backfill.py --start 20231016 --end 20261016 --sleep 2
+python3 pipeline/backfill.py --start 20231016 --end 20261019 --sleep 3 --max-days 20 --no-publish
 ```
 
-抓完後 `publish` 會重寫 `docs/`。`manifest.json` 的 `historyStart` / `asOf` 是實際範圍。
+結束碼 2 表示這段還沒抓完，再執行同一行會從 `data/state.json` 續跑。
 - **成交量單位**是股，不是張。
 
 ## 除權息怎麼還原
