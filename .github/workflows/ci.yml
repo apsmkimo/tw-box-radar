@@ -1,11 +1,29 @@
 name: ci
 
+# SMCPKG_SUPPORT>>>CursorXXX
+# on:
+#   push:
+#     paths-ignore:
+#       - "data/**"
+#       - "docs/**"
+#   pull_request:
+# 開著 PR 時，推到分支會同時產生 push 與 pull_request，同一筆變更跑兩次。
+# push 只留給 main；PR 更新只走 pull_request。行情檔不重編 APK。
 on:
   push:
+    branches: [main]
     paths-ignore:
       - "data/**"
       - "docs/**"
   pull_request:
+    paths-ignore:
+      - "data/**"
+      - "docs/**"
+# SMCPKG_SUPPORT<<<CursorYYY
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python:
@@ -27,11 +45,32 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      # SMCPKG_SUPPORT>>>CursorXXX
+      # - uses: android-actions/setup-android@v3
+      # - name: Install SDK packages
+      #   run: |
+      #     yes | sdkmanager --licenses >/dev/null || true
+      #     sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      # setup-android@v3 會執行 sdkmanager --licenses，但不回答 y/N。
+      # 映像裡多了尚未接受的授權時，這一步直接失敗，後面的 APK 不會上傳。
+      # runner 已帶 Android SDK，直接用它安裝 compileSdk 35。
       - name: Install SDK packages
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          set -euo pipefail
+          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "找不到 sdkmanager：$SDKMANAGER" >&2
+            find "$ANDROID_HOME" -name sdkmanager -type f >&2 || true
+            exit 1
+          fi
+          set +o pipefail
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          set -o pipefail
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
+      # SMCPKG_SUPPORT<<<CursorYYY
       - name: Test and build debug APK
         run: ./gradlew :core:test :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
