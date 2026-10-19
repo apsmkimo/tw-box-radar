@@ -5,6 +5,8 @@ on:
     # 16:30 與 18:30 Asia/Taipei。資料若尚未出來，今天不會被記成休市。
     - cron: "30 8 * * 1-5"
     - cron: "30 10 * * 1-5"
+    # 02:00 Asia/Taipei。歷史還沒補齊時，每次再抓 25 個平日並提交。排程只在預設分支生效。
+    - cron: "0 18 * * 1-5"
   workflow_dispatch:
     inputs:
       start:
@@ -12,7 +14,7 @@ on:
         required: false
         default: ""
       end:
-        description: "回補結束日 YYYYMMDD"
+        description: "回補結束日 YYYYMMDD，空白為台北今天"
         required: false
         default: ""
 
@@ -26,6 +28,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,11 +37,64 @@ jobs:
       - name: Fetch and publish
         run: |
           set -euo pipefail
-          if [ -n "${{ github.event.inputs.start }}" ]; then
-            python3 pipeline/backfill.py --start "${{ github.event.inputs.start }}" --end "${{ github.event.inputs.end }}" --sleep 3
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          START="${{ github.event.inputs.start }}"
+          END="${{ github.event.inputs.end }}"
+          if [ -z "$END" ]; then
+            END="$(TZ=Asia/Taipei date +%Y%m%d)"
+          fi
+          commit_data() {
+            git add data
+            if git diff --staged --quiet; then
+              echo "沒有新的月檔"
+            else
+              last="$(python3 -c 'import json; print(json.load(open("data/state.json"))["completed"][-1])')"
+              git commit -m "data: 回補行情至 ${last}"
+              git push
+            fi
+          }
+          # SMCPKG_SUPPORT>>>CursorXXX
+          # if [ -n "${{ github.event.inputs.start }}" ]; then
+          #   python3 pipeline/backfill.py --start "${{ github.event.inputs.start }}" --end "${{ github.event.inputs.end }}" --sleep 3
+          # else
+          #   python3 pipeline/daily.py
+          # fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$START" ]; then
+            while true; do
+              set +e
+              python3 pipeline/backfill.py --start "$START" --end "$END" --sleep 3 --max-days 20 --no-publish
+              code=$?
+              set -e
+              commit_data
+              if [ "$code" -eq 0 ]; then
+                break
+              fi
+              if [ "$code" -ne 2 ]; then
+                exit "$code"
+              fi
+            done
+            python3 pipeline/refresh_exrights.py --start 20231001 --end "$END" --sleep 3
+            python3 -c "import sys; from pathlib import Path; sys.path.insert(0, 'pipeline'); from twbox.publish import publish; publish(Path('.'))"
+          elif [ "${{ github.event.schedule }}" = "0 18 * * 1-5" ]; then
+            set +e
+            python3 pipeline/backfill.py --start 20231016 --end "$END" --sleep 3 --max-days 25 --no-publish
+            code=$?
+            set -e
+            if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
+              exit "$code"
+            fi
+            if ! git diff --quiet -- data; then
+              python3 pipeline/refresh_exrights.py --start 20231001 --end "$END" --sleep 3
+              python3 -c "import sys; from pathlib import Path; sys.path.insert(0, 'pipeline'); from twbox.publish import publish; publish(Path('.'))"
+              commit_data
+            else
+              echo "歷史已補到排程結束日，這次不重寫 docs"
+            fi
           else
             python3 pipeline/daily.py
           fi
+          # SMCPKG_SUPPORT<<<CursorYYY
       - name: Refresh offline sample and commit
         run: |
           git config user.name "github-actions[bot]"

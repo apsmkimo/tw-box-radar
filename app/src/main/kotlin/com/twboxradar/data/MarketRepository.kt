@@ -4,6 +4,7 @@ import android.content.Context
 import com.twboxradar.BuildConfig
 import com.twboxradar.core.Bar
 import com.twboxradar.core.SymbolHistory
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -102,8 +103,24 @@ fun parseWindow(text: String): List<SymbolHistory> {
 }
 
 fun parseSymbol(obj: JSONObject): SymbolHistory {
-    val barsJson = obj.getJSONArray("bars")
-    val bars = buildList {
+    // SMCPKG_SUPPORT>>>CursorXXX
+    // val barsJson = obj.getJSONArray("bars")
+    // val bars = buildList { ... 只讀 bars ... }
+    // return SymbolHistory(code = obj.getString("c"), name = obj.getString("n"), market = obj.getString("m"), bars = bars)
+    val bars = readBars(obj.getJSONArray("bars"))
+    val rawBars = if (obj.has("raw") && !obj.isNull("raw")) readBars(obj.getJSONArray("raw")) else emptyList()
+    return SymbolHistory(
+        code = obj.getString("c"),
+        name = obj.getString("n"),
+        market = obj.getString("m"),
+        bars = bars,
+        rawBars = rawBars,
+    )
+    // SMCPKG_SUPPORT<<<CursorYYY
+}
+
+private fun readBars(barsJson: JSONArray): List<Bar> {
+    return buildList {
         for (i in 0 until barsJson.length()) {
             val bar = barsJson.getJSONArray(i)
             add(
@@ -118,10 +135,4 @@ fun parseSymbol(obj: JSONObject): SymbolHistory {
             )
         }
     }
-    return SymbolHistory(
-        code = obj.getString("c"),
-        name = obj.getString("n"),
-        market = obj.getString("m"),
-        bars = bars,
-    )
 }

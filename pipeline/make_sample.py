@@ -10,6 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from twbox.adjust import adjust_bars  # noqa: E402
+from twbox.exrights import load_event_map  # noqa: E402
 from twbox.store import load_symbols  # noqa: E402
 
 OUT = ROOT / "app" / "src" / "main" / "assets" / "sample" / "window.json"
@@ -51,10 +53,17 @@ def from_history() -> dict | None:
     picked = [symbols[code] for code in PREFERRED if code in symbols and len(symbols[code].bars) >= 40]
     if len(picked) < 3:
         return None
+    # SMCPKG_SUPPORT>>>CursorXXX
+    # as_of = max(series.bars[-1].date for series in picked)
+    events = load_event_map(ROOT)
     as_of = max(series.bars[-1].date for series in picked)
+    # SMCPKG_SUPPORT<<<CursorYYY
     payload = []
     for series in picked:
-        window = series.bars[-180:]
+        # SMCPKG_SUPPORT>>>CursorXXX
+        # window = series.bars[-180:]
+        window = adjust_bars(series.bars, events.get(series.code, []))[-180:]
+        # SMCPKG_SUPPORT<<<CursorYYY
         payload.append(
             {
                 "c": series.code,

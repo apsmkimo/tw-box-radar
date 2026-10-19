@@ -6,11 +6,23 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .adjust import adjust_bars
 from .darvas import BoxParams, Status, evaluate
+from .exrights import load_event_map
 from .store import SymbolSeries, load_symbols
 
 WINDOW_BARS = 180
-SCHEMA = 1
+# SMCPKG_SUPPORT>>>CursorXXX
+# SCHEMA = 1
+SCHEMA = 2
+PRICE_NOTE = (
+    "向後還原：除權息日以前的開高低收，乘上其後各次（除權息參考價／前收盤價）。"
+    "成交量只在有無償配股或按持股比例現金增資時乘上（1＋配股率＋認購率），現金股利不調整成交量。"
+    "最新一根維持成交價；還沒有行情的除權息日先不套，等那天入庫再回頭調整。"
+    "因子來自證交所 TWT49U（含明細）與櫃買除權息計算表。"
+    "新的除權息日會在下次發佈時回頭調整更早的歷史。"
+)
+# SMCPKG_SUPPORT<<<CursorYYY
 
 
 def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
@@ -34,18 +46,36 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
     inside = []
     near_bottom = []
     params = BoxParams()
+    # SMCPKG_SUPPORT>>>CursorXXX
+    # 篩選與視窗以前直接用月檔成交價。
+    events = load_event_map(root)
+    adjusted_on = bool(events)
+    adjusted_count = 0
+    # SMCPKG_SUPPORT<<<CursorYYY
 
     for code in sorted(symbols):
         series = symbols[code]
         if not series.bars:
             continue
-        as_of = max(as_of, series.bars[-1].date)
-        history_start = min(history_start, series.bars[0].date)
-        _write_symbol(bars_dir / f"{code}.json", series)
+        # SMCPKG_SUPPORT>>>CursorXXX
+        # as_of = max(as_of, series.bars[-1].date)
+        # history_start = min(history_start, series.bars[0].date)
+        # _write_symbol(bars_dir / f"{code}.json", series)
+        # universe.append({"c": code, "n": series.name, "m": series.market})
+        # window = series.bars[-window_bars:]
+        # window_symbols.append(_symbol_json(series, window))
+        # row = _screen_row(series, params)
+        adjusted = adjust_bars(series.bars, events.get(code, []))
+        if _bars_differ(series.bars, adjusted):
+            adjusted_count += 1
+        as_of = max(as_of, adjusted[-1].date)
+        history_start = min(history_start, adjusted[0].date)
+        _write_symbol(bars_dir / f"{code}.json", series, adjusted)
         universe.append({"c": code, "n": series.name, "m": series.market})
-        window = series.bars[-window_bars:]
+        window = adjusted[-window_bars:]
         window_symbols.append(_symbol_json(series, window))
-        row = _screen_row(series, params)
+        row = _screen_row(series, adjusted, params)
+        # SMCPKG_SUPPORT<<<CursorYYY
         if row is None:
             continue
         status = row["status"]
@@ -67,10 +97,16 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
         "symbolCount": len(universe),
         "historyStart": f"{history_start:08d}",
         "windowBars": window_bars,
-        "adjusted": False,
+        # SMCPKG_SUPPORT>>>CursorXXX
+        # "adjusted": False,
+        # "priceNote": "成交價未還原除權息。跨越除權息日的箱型與報酬會失真。",
+        "adjusted": adjusted_on,
+        "adjustedSymbolCount": adjusted_count,
+        "adjustMethod": "backward-official-ref" if adjusted_on else "none",
         "universe": "4-digit-common-stock",
         "markets": ["twse", "tpex"],
-        "priceNote": "成交價未還原除權息。跨越除權息日的箱型與報酬會失真。",
+        "priceNote": PRICE_NOTE if adjusted_on else "尚未取得除權息因子，這次發佈仍是成交價。",
+        # SMCPKG_SUPPORT<<<CursorYYY
         "params": {
             "lookbackDays": params.lookback_days,
             "confirmationDays": params.confirmation_days,
@@ -95,14 +131,18 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
     )
     print(
         f"[publish] asOf={manifest['asOf']} symbols={len(universe)} "
-        f"breakout={len(breakout)} inside={len(inside)} nearBottom={len(near_bottom)}",
+        f"breakout={len(breakout)} inside={len(inside)} nearBottom={len(near_bottom)} "
+        f"adjusted={adjusted_on} adjustedSymbols={adjusted_count}",
         flush=True,
     )
     return manifest
 
 
-def _screen_row(series: SymbolSeries, params: BoxParams) -> dict | None:
-    snap = evaluate(series.bars, params)
+def _screen_row(series: SymbolSeries, bars, params: BoxParams) -> dict | None:
+    # SMCPKG_SUPPORT>>>CursorXXX
+    # snap = evaluate(series.bars, params)
+    snap = evaluate(bars, params)
+    # SMCPKG_SUPPORT<<<CursorYYY
     if snap.box is None or snap.status in {Status.NONE, Status.BREAKDOWN}:
         return None
     span = snap.box.top - snap.box.bottom
@@ -125,17 +165,43 @@ def _screen_row(series: SymbolSeries, params: BoxParams) -> dict | None:
     }
 
 
-def _symbol_json(series: SymbolSeries, bars) -> dict:
-    return {
+def _symbol_json(series: SymbolSeries, bars, raw=None) -> dict:
+    payload = {
         "c": series.code,
         "n": series.name,
         "m": series.market,
         "bars": [[bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume] for bar in bars],
     }
+    # SMCPKG_SUPPORT>>>CursorXXX
+    # 以前個股檔只有成交價 bars。有除權息差異時另存 raw，視窗檔不帶 raw。
+    if raw is not None:
+        payload["raw"] = [[bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume] for bar in raw]
+    # SMCPKG_SUPPORT<<<CursorYYY
+    return payload
 
 
-def _write_symbol(path: Path, series: SymbolSeries) -> None:
-    _dump(path, _symbol_json(series, series.bars))
+def _write_symbol(path: Path, series: SymbolSeries, adjusted) -> None:
+    # SMCPKG_SUPPORT>>>CursorXXX
+    # _dump(path, _symbol_json(series, series.bars))
+    raw = series.bars if _bars_differ(series.bars, adjusted) else None
+    _dump(path, _symbol_json(series, adjusted, raw))
+    # SMCPKG_SUPPORT<<<CursorYYY
+
+
+def _bars_differ(raw, adjusted) -> bool:
+    if len(raw) != len(adjusted):
+        return True
+    for left, right in zip(raw, adjusted):
+        if (
+            left.date != right.date
+            or left.open != right.open
+            or left.high != right.high
+            or left.low != right.low
+            or left.close != right.close
+            or left.volume != right.volume
+        ):
+            return True
+    return False
 
 
 def _dump(path: Path, payload) -> None:

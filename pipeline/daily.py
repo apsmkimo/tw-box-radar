@@ -13,7 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from twbox.calendar_util import recent_weekdays, taipei_today, yyyymmdd  # noqa: E402
+from twbox.calendar_util import parse_yyyymmdd, recent_weekdays, taipei_today, yyyymmdd  # noqa: E402
+from twbox.exrights import refresh_exrights  # noqa: E402
 from twbox.fetch import fetch_day  # noqa: E402
 from twbox.http_client import HttpClient  # noqa: E402
 from twbox.publish import publish  # noqa: E402
@@ -30,6 +31,10 @@ def main() -> int:
         key = yyyymmdd(day)
         if key not in completed and key not in closed:
             pending.append(day)
+    # SMCPKG_SUPPORT>>>CursorXXX
+    # 以前只在有新行情時重發佈，除權息日不會回頭改舊 K 線。
+    factors_changed = _refresh_factors()
+    # SMCPKG_SUPPORT<<<CursorYYY
     if not pending:
         print("[daily] 沒有待抓日期", flush=True)
         publish(ROOT)
@@ -59,9 +64,26 @@ def main() -> int:
         else:
             print(f"[daily] {key} 下載失敗，稍後再試", flush=True)
             return 1
-    if changed or not (ROOT / "docs" / "manifest.json").exists():
+    # SMCPKG_SUPPORT>>>CursorXXX
+    # if changed or not (ROOT / "docs" / "manifest.json").exists():
+    if changed or factors_changed or not (ROOT / "docs" / "manifest.json").exists():
+        # SMCPKG_SUPPORT<<<CursorYYY
         publish(ROOT)
     return 0
+
+
+def _refresh_factors() -> bool:
+    try:
+        return refresh_exrights(
+            ROOT,
+            HttpClient(min_interval=3.0),
+            parse_yyyymmdd("20231001"),
+            taipei_today(),
+            tpex_client=HttpClient(min_interval=3.0),
+        )
+    except Exception as exc:  # noqa: BLE001 — 行情仍要發佈，因子留待下次
+        print(f"[daily] 除權息更新失敗，沿用已有因子：{exc}", flush=True)
+        return False
 
 
 if __name__ == "__main__":

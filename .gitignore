@@ -15,6 +15,7 @@ __pycache__/
 .venv/
 
 data/checkpoint.json.gz
+data/*.json.tmp
 *.log
 
 .DS_Store

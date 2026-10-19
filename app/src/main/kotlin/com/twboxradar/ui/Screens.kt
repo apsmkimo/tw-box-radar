@@ -38,6 +38,7 @@ import com.twboxradar.core.BoxParams
 import com.twboxradar.core.BoxStatus
 import com.twboxradar.core.DISCLAIMER
 import com.twboxradar.core.ScreenRow
+import com.twboxradar.core.SymbolHistory
 import com.twboxradar.core.Trade
 import com.twboxradar.core.conditionCatalog
 import com.twboxradar.core.describePosition
@@ -56,7 +57,10 @@ fun DisclaimerScreen(onAccept: () -> Unit) {
         Text("台股箱型雷達只整理公開行情與客觀計算結果，例如「突破箱頂」「跌破箱底」「距離箱頂還有多少」。")
         Text("本程式沒有投資顧問資格，不提供買賣建議、目標價或個股推薦。")
         Text(DISCLAIMER, fontWeight = FontWeight.Bold)
-        Text("行情來自臺灣證券交易所與證券櫃檯買賣中心的公開資料，價格未還原除權息。跨越除權息日的箱型與報酬可能失真。")
+        // SMCPKG_SUPPORT>>>CursorXXX
+        // Text("行情來自臺灣證券交易所與證券櫃檯買賣中心的公開資料，價格未還原除權息。跨越除權息日的箱型與報酬可能失真。")
+        Text("行情來自臺灣證券交易所與證券櫃檯買賣中心。清單、箱型、提醒與回測使用向後還原價，拿掉除權息造成的缺口。K 線預設也是還原價，可以改看成交原價。")
+        // SMCPKG_SUPPORT<<<CursorYYY
         Button(onClick = onAccept, modifier = Modifier.fillMaxWidth()) {
             Text("我了解了，資料僅供參考")
         }
@@ -150,7 +154,10 @@ fun DetailScreen(state: UiState, code: String, onWatch: () -> Unit, onBacktest: 
                 Text(describePosition(row), fontWeight = FontWeight.Medium)
                 Text(boxLine(row))
                 Text("箱頂日 ${formatDate(row.topDate)}　箱底日 ${formatDate(row.bottomDate)}")
-                Text("價格未還原除權息。${DISCLAIMER}", style = MaterialTheme.typography.bodySmall)
+                // SMCPKG_SUPPORT>>>CursorXXX
+                // Text("價格未還原除權息。${DISCLAIMER}", style = MaterialTheme.typography.bodySmall)
+                Text("箱型依還原價計算。${DISCLAIMER}", style = MaterialTheme.typography.bodySmall)
+                // SMCPKG_SUPPORT<<<CursorYYY
                 if (state.detailLoading) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.padding(end = 8.dp))
@@ -165,7 +172,42 @@ fun DetailScreen(state: UiState, code: String, onWatch: () -> Unit, onBacktest: 
                 }
             }
         }
-        item { CandleChart(symbol.bars, row.top, row.bottom) }
+        // SMCPKG_SUPPORT>>>CursorXXX
+        // item { CandleChart(symbol.bars, row.top, row.bottom) }
+        item { AdjustedChart(symbol, row.top, row.bottom) }
+        // SMCPKG_SUPPORT<<<CursorYYY
+    }
+}
+
+@Composable
+private fun AdjustedChart(symbol: SymbolHistory, top: Double?, bottom: Double?) {
+    val hasRaw = symbol.rawBars.isNotEmpty()
+    var showRaw by rememberSaveable(symbol.code) { mutableStateOf(false) }
+    Column {
+        if (hasRaw) {
+            Row(
+                Modifier.padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(selected = !showRaw, onClick = { showRaw = false }, label = { Text("還原價") })
+                FilterChip(selected = showRaw, onClick = { showRaw = true }, label = { Text("原始價") })
+            }
+            Text(
+                if (showRaw) {
+                    "目前是成交原價。箱頂與箱底是用還原價算出來的，所以這張圖不畫箱線。"
+                } else {
+                    "目前是向後還原價。除權息日前的價格已按官方參考價調過，成交量只在配股或現金增資時調整。"
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        val useRaw = showRaw && hasRaw
+        CandleChart(
+            if (useRaw) symbol.rawBars else symbol.bars,
+            if (useRaw) null else top,
+            if (useRaw) null else bottom,
+        )
     }
 }
 
@@ -240,7 +282,10 @@ fun BacktestScreen(state: UiState, code: String) {
     ) {
         Text("${symbol?.name ?: code} $code 回測", style = MaterialTheme.typography.headlineSmall)
         Text("買進：收盤突破箱頂。賣出：收盤跌破停損（先是該箱箱底，之後只上移到新的箱底）。")
-        Text("以收盤價模擬成交，不計手續費與稅。價格未還原除權息，區間盤的假突破會出現在交易清單。")
+        // SMCPKG_SUPPORT>>>CursorXXX
+        // Text("以收盤價模擬成交，不計手續費與稅。價格未還原除權息，區間盤的假突破會出現在交易清單。")
+        Text("以還原後的收盤價模擬成交，不計手續費與稅。區間盤的假突破會出現在交易清單。")
+        // SMCPKG_SUPPORT<<<CursorYYY
         Text(DISCLAIMER, style = MaterialTheme.typography.bodySmall)
         if (state.backtestLoading || state.backtest == null) {
             CircularProgressIndicator()

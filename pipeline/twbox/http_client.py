@@ -21,20 +21,40 @@ class HttpClient:
         self.min_interval = min_interval
         self._last = 0.0
 
-    def get(self, url: str, timeout: float = 90.0, retries: int = 6) -> bytes:
+    # SMCPKG_SUPPORT>>>CursorXXX
+    # def get(self, url: str, timeout: float = 90.0, retries: int = 6) -> bytes:
+    def get(
+        self,
+        url: str,
+        timeout: float = 90.0,
+        retries: int = 6,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        # SMCPKG_SUPPORT<<<CursorYYY
         delay = 4.0
         last_error: Exception | None = None
         for attempt in range(retries):
             self._wait()
-            request = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept": "*/*",
-                    "Accept-Encoding": "gzip",
-                    "Connection": "close",
-                },
-            )
+            # SMCPKG_SUPPORT>>>CursorXXX
+            # request = urllib.request.Request(
+            #     url,
+            #     headers={
+            #         "User-Agent": USER_AGENT,
+            #         "Accept": "*/*",
+            #         "Accept-Encoding": "gzip",
+            #         "Connection": "close",
+            #     },
+            # )
+            merged = {
+                "User-Agent": USER_AGENT,
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip",
+                "Connection": "close",
+            }
+            if headers:
+                merged.update(headers)
+            request = urllib.request.Request(url, headers=merged)
+            # SMCPKG_SUPPORT<<<CursorYYY
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     body = response.read()

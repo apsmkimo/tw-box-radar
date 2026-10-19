@@ -1,7 +1,10 @@
 """把證交所、櫃買中心的每日行情回應轉成統一列。
 
 只保留普通股：代號為 4 碼數字且不以 0 開頭（排除 ETF、權證、特別股）。
-價格未還原除權息，與官方成交價一致。
+# SMCPKG_SUPPORT>>>CursorXXX
+# 價格未還原除權息，與官方成交價一致。
+這裡留下官方成交價。除權息向後還原在發佈時才做，月檔本身不改。
+# SMCPKG_SUPPORT<<<CursorYYY
 """
 
 from __future__ import annotations

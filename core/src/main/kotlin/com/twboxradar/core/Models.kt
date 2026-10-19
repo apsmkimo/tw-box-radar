@@ -49,6 +49,10 @@ data class SymbolHistory(
     val name: String,
     val market: String,
     val bars: List<Bar>,
+    // SMCPKG_SUPPORT>>>CursorXXX
+    // 還原價放在 bars。rawBars 有資料時，K 線可以改看成交原價。
+    val rawBars: List<Bar> = emptyList(),
+    // SMCPKG_SUPPORT<<<CursorYYY
 )
 
 data class ScreenRow(
