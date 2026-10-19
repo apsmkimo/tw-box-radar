@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .http_client import HttpClient
 from .parse import (
     loads_json,
@@ -21,14 +23,27 @@ def _iso(yyyymmdd: str) -> str:
     return f"{yyyymmdd[:4]}/{yyyymmdd[4:6]}/{yyyymmdd[6:8]}"
 
 
-def fetch_day(client: HttpClient, yyyymmdd: str, allow_openapi_fallback: bool = True) -> tuple[str, list[list]]:
+def fetch_day(
+    client: HttpClient,
+    yyyymmdd: str,
+    allow_openapi_fallback: bool = True,
+    tpex_client: HttpClient | None = None,
+) -> tuple[str, list[list]]:
     """回傳 (ok|closed|error, rows)。
 
     歷史日只用可指定日期的端點。OpenAPI 只在「最新快照的日期正好是這一天」時當備援，
-    因為它忽略 date 參數。
+    因為它忽略 date 參數。傳入兩個客戶端時，上市與上櫃同時下載，各自節流。
     """
-    twse_status, twse_rows = _fetch_twse(client, yyyymmdd, allow_openapi_fallback)
-    tpex_status, tpex_rows = _fetch_tpex(client, yyyymmdd, allow_openapi_fallback)
+    other = tpex_client or client
+    if other is client:
+        twse_status, twse_rows = _fetch_twse(client, yyyymmdd, allow_openapi_fallback)
+        tpex_status, tpex_rows = _fetch_tpex(other, yyyymmdd, allow_openapi_fallback)
+    else:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            twse_future = pool.submit(_fetch_twse, client, yyyymmdd, allow_openapi_fallback)
+            tpex_future = pool.submit(_fetch_tpex, other, yyyymmdd, allow_openapi_fallback)
+            twse_status, twse_rows = twse_future.result()
+            tpex_status, tpex_rows = tpex_future.result()
     if twse_status == "error" or tpex_status == "error":
         return "error", []
     if twse_status == "closed" and tpex_status == "closed":

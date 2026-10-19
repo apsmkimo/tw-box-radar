@@ -35,6 +35,7 @@ def main() -> int:
     completed = set(state.get("completed", []))
     closed = set(state.get("closed", []))
     client = HttpClient(min_interval=args.sleep)
+    tpex_client = HttpClient(min_interval=args.sleep)
     days = weekdays_between(start, end)
     print(f"[backfill] {args.start}..{args.end} 平日 {len(days)} 天，間隔 {args.sleep}s", flush=True)
     for index, day in enumerate(days, start=1):
@@ -42,7 +43,7 @@ def main() -> int:
         if key in completed or key in closed:
             continue
         print(f"[backfill] ({index}/{len(days)}) {key}", flush=True)
-        status, rows = fetch_day(client, key, allow_openapi_fallback=False)
+        status, rows = fetch_day(client, key, allow_openapi_fallback=False, tpex_client=tpex_client)
         if status == "ok":
             append_day(ROOT, int(key), rows)
             completed.add(key)

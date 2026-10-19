@@ -36,12 +36,13 @@ def main() -> int:
         return 0
 
     client = HttpClient(min_interval=3.0)
+    tpex_client = HttpClient(min_interval=3.0)
     today_key = yyyymmdd(today)
     changed = False
     for day in pending:
         key = yyyymmdd(day)
         print(f"[daily] 抓取 {key}", flush=True)
-        status, rows = fetch_day(client, key)
+        status, rows = fetch_day(client, key, tpex_client=tpex_client)
         if status == "ok":
             append_day(ROOT, int(key), rows)
             completed.add(key)
