@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -37,16 +38,19 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.twboxradar.ads.NativeAdCard
 import com.twboxradar.core.BacktestResult
 import com.twboxradar.core.BoxParams
 import com.twboxradar.core.BoxStatus
 import com.twboxradar.core.DISCLAIMER
+import com.twboxradar.core.ListSlot
 import com.twboxradar.core.PREVIEW_DATA_BRANCH
 import com.twboxradar.core.ScreenRow
 import com.twboxradar.core.SymbolHistory
 import com.twboxradar.core.Trade
 import com.twboxradar.core.conditionCatalog
 import com.twboxradar.core.describePosition
+import com.twboxradar.core.insertAdSlots
 import com.twboxradar.core.marketDocsUrl
 import com.twboxradar.core.marketLabel
 import com.twboxradar.core.membershipLabel
@@ -77,7 +81,7 @@ fun DisclaimerScreen(onAccept: () -> Unit) {
 }
 
 @Composable
-fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
+fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit, showAds: Boolean) {
     // SMCPKG_SUPPORT>>>CursorXXX
     // fun ListScreen(state: UiState, onOpen: (String) -> Unit)
     // 搜尋以前只過濾目前分頁，所以在「今日突破箱頂」輸入 2330 會得到 0 檔。
@@ -152,13 +156,7 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
             if (shown.isEmpty()) {
                 item { EmptyListMessage(state, searching, market, query.trim(), titles[tab]) }
             }
-            items(shown, key = { it.code }) { row ->
-                StockCard(
-                    row,
-                    onClick = { onOpen(row.code) },
-                    membership = if (searching) membershipLabel(row.status) else null,
-                )
-            }
+            stockEntries(shown, showAds = showAds, membership = searching, onOpen = onOpen)
         }
     }
     // SMCPKG_SUPPORT<<<CursorYYY
@@ -186,6 +184,33 @@ private fun EmptyListMessage(state: UiState, searching: Boolean, market: String,
                 "目前是內建範例，只有少數股票。到「設定」把資料分支改成 $PREVIEW_DATA_BRANCH 並重新下載，才能查全市場。",
                 style = MaterialTheme.typography.bodySmall,
             )
+        }
+    }
+}
+
+private fun LazyListScope.stockEntries(
+    rows: List<ScreenRow>,
+    showAds: Boolean,
+    membership: Boolean,
+    onOpen: (String) -> Unit,
+) {
+    val slots = insertAdSlots(rows, enabled = showAds)
+    items(
+        slots,
+        key = { slot ->
+            when (slot) {
+                is ListSlot.Item -> slot.value.code
+                is ListSlot.Ad -> "ad-${slot.afterCount}"
+            }
+        },
+    ) { slot ->
+        when (slot) {
+            is ListSlot.Item -> StockCard(
+                slot.value,
+                onClick = { onOpen(slot.value.code) },
+                membership = if (membership) membershipLabel(slot.value.status) else null,
+            )
+            is ListSlot.Ad -> NativeAdCard(enabled = true)
         }
     }
 }
@@ -290,7 +315,7 @@ private fun AdjustedChart(symbol: SymbolHistory, top: Double?, bottom: Double?) 
 }
 
 @Composable
-fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
+fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit, showAds: Boolean) {
     val rows = state.rows.filter { it.code in state.watchlist }
     Column(Modifier.fillMaxSize()) {
         Header(state, onRetry)
@@ -306,7 +331,7 @@ fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(rows, key = { it.code }) { row -> StockCard(row, onClick = { onOpen(row.code) }) }
+            stockEntries(rows, showAds = showAds, membership = false, onOpen = onOpen)
         }
     }
 }
@@ -318,6 +343,7 @@ fun ConditionScreen(
     onRun: () -> Unit,
     onOpen: (String) -> Unit,
     onRetry: () -> Unit,
+    showAds: Boolean,
 ) {
     Column(Modifier.fillMaxSize()) {
         Header(state, onRetry)
@@ -349,7 +375,7 @@ fun ConditionScreen(
             val hits = state.conditionHits
             if (hits != null) {
                 item { Text("符合 ${hits.size} 檔", fontWeight = FontWeight.Medium) }
-                items(hits, key = { it.code }) { row -> StockCard(row, onClick = { onOpen(row.code) }) }
+                stockEntries(hits, showAds = showAds, membership = false, onOpen = onOpen)
             }
         }
     }
