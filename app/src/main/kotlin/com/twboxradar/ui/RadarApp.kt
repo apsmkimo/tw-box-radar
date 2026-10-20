@@ -2,31 +2,44 @@ package com.twboxradar.ui
 
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.twboxradar.BuildConfig
 import com.twboxradar.R
@@ -74,7 +87,16 @@ fun RadarApp(viewModel: RadarViewModel, ads: AdsController, onRequestNotificatio
             topBar = {
                 Column {
                     TopAppBar(
-                        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        title = {
+                            // 標題比預設 titleLarge（22sp）小兩成，並加粗。
+                            Text(
+                                title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.6.sp,
+                            )
+                        },
                         navigationIcon = {
                             // SMCPKG_SUPPORT>>>CursorXXX
                             // 返回以前是底部的文字按鈕。子畫面改到左上角的箭頭。
@@ -90,6 +112,7 @@ fun RadarApp(viewModel: RadarViewModel, ads: AdsController, onRequestNotificatio
                                 Icon(
                                     painter = painterResource(R.drawable.ic_remove_ads),
                                     contentDescription = "移除廣告",
+                                    modifier = Modifier.size(width = 30.dp, height = 22.dp),
                                     tint = MaterialTheme.colorScheme.onSurface,
                                 )
                             }
@@ -106,7 +129,8 @@ fun RadarApp(viewModel: RadarViewModel, ads: AdsController, onRequestNotificatio
                         style = MaterialTheme.typography.labelSmall,
                     )
                     if (showNav) {
-                        NavigationBar {
+                        // 導覽列內容高度 80dp 的八成。系統列插入仍留在這個高度外面。
+                        CompactNavigationBar {
                             // SMCPKG_SUPPORT>>>CursorXXX
                             // BarItem("選股", state.route is Route.Lists) { viewModel.openTab(Route.Lists) }
                             // 四個項目以前共用啟動圖示。那個向量是整面色塊，被導覽列著色後變成大矩形。
@@ -165,24 +189,44 @@ fun RadarApp(viewModel: RadarViewModel, ads: AdsController, onRequestNotificatio
 }
 
 @Composable
+private fun CompactNavigationBar(content: @Composable RowScope.() -> Unit) {
+    Surface(color = NavigationBarDefaults.containerColor, tonalElevation = NavigationBarDefaults.Elevation) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(NavigationBarDefaults.windowInsets)
+                .height(64.dp)
+                .selectableGroup(),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
+    }
+}
+
+@Composable
 private fun RowScope.BarItem(label: String, icon: Int, selected: Boolean, onClick: () -> Unit) {
-    NavigationBarItem(
-        selected = selected,
-        onClick = onClick,
-        icon = {
+    val color = if (selected) Color(0xFF1565C0) else Color(0xFF546E7A)
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .height(64.dp)
+            .selectable(selected = selected, onClick = onClick, role = Role.Tab),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .background(if (selected) Color(0xFFD6E6F8) else Color.Transparent, CircleShape)
+                .padding(horizontal = 14.dp, vertical = 1.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(
                 painter = painterResource(icon),
                 contentDescription = label,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(19.2.dp),
+                tint = color,
             )
-        },
-        label = { Text(label) },
-        colors = NavigationBarItemDefaults.colors(
-            selectedIconColor = Color(0xFF1565C0),
-            selectedTextColor = Color(0xFF1565C0),
-            unselectedIconColor = Color(0xFF546E7A),
-            unselectedTextColor = Color(0xFF546E7A),
-            indicatorColor = Color(0xFFD6E6F8),
-        ),
-    )
+        }
+        Text(label, color = color, fontSize = 9.6.sp, lineHeight = 11.sp, maxLines = 1)
+    }
 }

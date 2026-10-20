@@ -1,12 +1,19 @@
 package com.twboxradar.ui
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -27,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -34,10 +42,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.twboxradar.ads.NativeAdCard
 import com.twboxradar.core.BacktestResult
 import com.twboxradar.core.BoxParams
@@ -97,21 +109,45 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit, sh
         Header(state, onRetry)
         TabRow(selectedTabIndex = tab) {
             titles.forEachIndexed { index, title ->
-                Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+                Tab(
+                    selected = tab == index,
+                    onClick = { tab = index },
+                    text = {
+                        Text(
+                            title,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            letterSpacing = (-0.4).sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                        )
+                    },
+                )
             }
         }
-        OutlinedTextField(
+        val searchInteraction = remember { MutableInteractionSource() }
+        val searchFocused by searchInteraction.collectIsFocusedAsState()
+        BasicTextField(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            label = { Text("搜尋代號或名稱") },
-            placeholder = { Text("例如 2330 或 台積電") },
-            supportingText = {
-                Text(if (searching) "正在查全部股票，不受上方分頁限制。點一下結果即可開啟。" else "輸入後會改查全部股票，不限目前這個分頁。")
-            },
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .height(40.dp)
+                .border(
+                    width = 1.dp,
+                    color = if (searchFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    shape = RoundedCornerShape(4.dp),
+                )
+                .padding(horizontal = 12.dp),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 15.sp,
+            ),
             singleLine = true,
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(
                 onSearch = {
@@ -119,6 +155,27 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit, sh
                     focus.clearFocus()
                 },
             ),
+            interactionSource = searchInteraction,
+            decorationBox = { inner ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+                    if (query.isEmpty()) {
+                        Text(
+                            "搜尋代號或名稱",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+        Text(
+            if (searching) "正在查全部股票，不受上方分頁限制。點一下結果即可開啟。" else "輸入後會改查全部股票，不限目前這個分頁。",
+            modifier = Modifier.padding(horizontal = 28.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("all" to "全部", "twse" to "上市", "tpex" to "上櫃").forEach { (id, label) ->

@@ -12,8 +12,8 @@ android {
         applicationId = "com.twboxradar"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.0"
+        versionCode = 4
+        versionName = "0.2.1"
         // 廣告 ID 只改這裡。目前是 Google 官方測試 ID，上架前換成 AdMob 的正式 ID。
         // 說明見 README「廣告與移除廣告」。
         val admobAppId = "ca-app-pub-3940256099942544~3347511713"
