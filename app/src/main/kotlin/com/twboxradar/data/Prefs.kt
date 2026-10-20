@@ -22,6 +22,13 @@ class Prefs(context: Context) {
         get() = sp.getStringSet(KEY_NOTIFIED, emptySet())?.toSet() ?: emptySet()
         set(value) = sp.edit().putStringSet(KEY_NOTIFIED, value.toSet()).apply()
 
+    // SMCPKG_SUPPORT>>>CursorXXX
+    /** 空白表示 main。合併前可改成預覽分支，先下載全市場。 */
+    var dataBranch: String
+        get() = sp.getString(KEY_BRANCH, "") ?: ""
+        set(value) = sp.edit().putString(KEY_BRANCH, value.trim()).apply()
+    // SMCPKG_SUPPORT<<<CursorYYY
+
     fun boxParams(): BoxParams = BoxParams(
         lookbackDays = sp.getInt(KEY_LOOKBACK, 60),
         confirmationDays = sp.getInt(KEY_CONFIRM, 3),
@@ -53,5 +60,6 @@ class Prefs(context: Context) {
         private const val KEY_NEAR = "near"
         private const val KEY_VOLUME = "volume"
         private const val KEY_VOLUME_ENTRY = "volume_entry"
+        private const val KEY_BRANCH = "data_branch"
     }
 }

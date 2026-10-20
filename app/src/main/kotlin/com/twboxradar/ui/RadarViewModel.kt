@@ -48,6 +48,7 @@ data class UiState(
     val detailLoading: Boolean = false,
     val backtest: BacktestResult? = null,
     val backtestLoading: Boolean = false,
+    val dataBranch: String = "",
 )
 
 class RadarViewModel(app: Application) : AndroidViewModel(app) {
@@ -60,6 +61,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
             watchlist = prefs.watchlist,
             disclaimerAccepted = prefs.disclaimerAccepted,
             alertsEnabled = prefs.alertsEnabled,
+            dataBranch = prefs.dataBranch,
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -71,7 +73,10 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh(force: Boolean = true) {
         viewModelScope.launch {
             _state.update { it.copy(loading = true) }
-            val loaded = repository.loadMarket(force)
+            // SMCPKG_SUPPORT>>>CursorXXX
+            // val loaded = repository.loadMarket(force)
+            val loaded = repository.loadMarket(force, _state.value.dataBranch)
+            // SMCPKG_SUPPORT<<<CursorYYY
             val params = _state.value.params
             val rows = withContext(Dispatchers.Default) { loaded.symbols.map { analyze(it, params) } }
             _state.update {
@@ -103,7 +108,10 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _state.update { it.copy(detailLoading = true) }
             val current = _state.value.symbols.firstOrNull { it.code == code }
-            val full = repository.loadHistory(code, current)
+            // SMCPKG_SUPPORT>>>CursorXXX
+            // val full = repository.loadHistory(code, current)
+            val full = repository.loadHistory(code, current, _state.value.dataBranch)
+            // SMCPKG_SUPPORT<<<CursorYYY
             if (full != null) {
                 val params = _state.value.params
                 val replaced = _state.value.symbols.map { if (it.code == code) full else it }
@@ -152,6 +160,12 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
     fun setAlerts(enabled: Boolean) {
         prefs.alertsEnabled = enabled
         _state.update { it.copy(alertsEnabled = enabled) }
+    }
+
+    fun setDataBranch(branch: String) {
+        prefs.dataBranch = branch.trim()
+        _state.update { it.copy(dataBranch = prefs.dataBranch) }
+        refresh(force = true)
     }
 
     fun toggleCondition(id: String) {

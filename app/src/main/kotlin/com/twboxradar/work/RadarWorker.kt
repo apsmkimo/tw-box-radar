@@ -28,7 +28,10 @@ class RadarWorker(
     override suspend fun doWork(): Result {
         val prefs = Prefs(applicationContext)
         if (!prefs.alertsEnabled || prefs.watchlist.isEmpty()) return Result.success()
-        val loaded = MarketRepository(applicationContext).loadMarket(force = true)
+        // SMCPKG_SUPPORT>>>CursorXXX
+        // val loaded = MarketRepository(applicationContext).loadMarket(force = true)
+        val loaded = MarketRepository(applicationContext).loadMarket(force = true, branch = prefs.dataBranch)
+        // SMCPKG_SUPPORT<<<CursorYYY
         if (loaded.sample || loaded.asOf.isBlank()) return Result.retry()
         val watched = prefs.watchlist
         val lines = mutableListOf<String>()

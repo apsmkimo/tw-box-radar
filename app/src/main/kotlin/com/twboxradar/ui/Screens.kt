@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,18 +33,25 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.twboxradar.core.BacktestResult
 import com.twboxradar.core.BoxParams
 import com.twboxradar.core.BoxStatus
 import com.twboxradar.core.DISCLAIMER
+import com.twboxradar.core.PREVIEW_DATA_BRANCH
 import com.twboxradar.core.ScreenRow
 import com.twboxradar.core.SymbolHistory
 import com.twboxradar.core.Trade
 import com.twboxradar.core.conditionCatalog
 import com.twboxradar.core.describePosition
+import com.twboxradar.core.marketDocsUrl
 import com.twboxradar.core.marketLabel
+import com.twboxradar.core.membershipLabel
+import com.twboxradar.core.normalizeDataBranch
+import com.twboxradar.core.visibleRows
 import java.util.Locale
 
 @Composable
@@ -68,14 +77,20 @@ fun DisclaimerScreen(onAccept: () -> Unit) {
 }
 
 @Composable
-fun ListScreen(state: UiState, onOpen: (String) -> Unit) {
+fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
+    // SMCPKG_SUPPORT>>>CursorXXX
+    // fun ListScreen(state: UiState, onOpen: (String) -> Unit)
+    // 搜尋以前只過濾目前分頁，所以在「今日突破箱頂」輸入 2330 會得到 0 檔。
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
     var market by rememberSaveable { mutableStateOf("all") }
+    val focus = LocalFocusManager.current
     val titles = listOf("今日突破箱頂", "箱型內整理中", "接近箱底")
     val statuses = listOf(BoxStatus.BREAKOUT, BoxStatus.INSIDE, BoxStatus.NEAR_BOTTOM)
+    val shown = visibleRows(state.rows, statuses[tab], market, query)
+    val searching = query.isNotBlank()
     Column(Modifier.fillMaxSize()) {
-        Header(state)
+        Header(state, onRetry)
         TabRow(selectedTabIndex = tab) {
             titles.forEachIndexed { index, title ->
                 Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
@@ -88,40 +103,103 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit) {
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             label = { Text("搜尋代號或名稱") },
+            placeholder = { Text("例如 2330 或 台積電") },
+            supportingText = {
+                Text(if (searching) "正在查全部股票，不受上方分頁限制。點一下結果即可開啟。" else "輸入後會改查全部股票，不限目前這個分頁。")
+            },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(
+                onSearch = {
+                    if (shown.size == 1) onOpen(shown.single().code)
+                    focus.clearFocus()
+                },
+            ),
         )
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("all" to "全部", "twse" to "上市", "tpex" to "上櫃").forEach { (id, label) ->
                 FilterChip(selected = market == id, onClick = { market = id }, label = { Text(label) })
             }
         }
-        if (state.loading && state.rows.isEmpty()) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (searching && shown.size == 1) {
+            Button(
+                onClick = { onOpen(shown.single().code) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            ) { Text("開啟 ${shown.single().name} ${shown.single().code}") }
         }
-        val shown = state.rows.byStatus(statuses[tab]).filter { row ->
-            (market == "all" || row.market == market) &&
-                (query.isBlank() || row.code.contains(query.trim()) || row.name.contains(query.trim()))
+        if (state.loading) {
+            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
         }
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item { Text("共 ${shown.size} 檔", style = MaterialTheme.typography.labelLarge) }
-            items(shown, key = { it.code }) { row ->
-                StockCard(row, onClick = { onOpen(row.code) })
+            item {
+                Text(
+                    if (searching) "從全部股票找到 ${shown.size} 檔" else "「${titles[tab]}」共 ${shown.size} 檔",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                if (!searching) {
+                    Text(
+                        "這一頁只列出符合分頁的股票。想找特定代號，直接輸入即可，鍵盤上的搜尋鍵也會開啟唯一結果。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
+            if (shown.isEmpty()) {
+                item { EmptyListMessage(state, searching, market, query.trim(), titles[tab]) }
+            }
+            items(shown, key = { it.code }) { row ->
+                StockCard(
+                    row,
+                    onClick = { onOpen(row.code) },
+                    membership = if (searching) membershipLabel(row.status) else null,
+                )
+            }
+        }
+    }
+    // SMCPKG_SUPPORT<<<CursorYYY
+}
+
+@Composable
+private fun EmptyListMessage(state: UiState, searching: Boolean, market: String, query: String, tabTitle: String) {
+    val marketName = when (market) {
+        "twse" -> "上市"
+        "tpex" -> "上櫃"
+        else -> "全部市場"
+    }
+    val text = when {
+        searching && market != "all" ->
+            "在「$marketName」裡找不到「$query」。市場篩選仍然有效，可改選「全部」再查一次。"
+        searching ->
+            "已載入的股票裡找不到「$query」。"
+        else ->
+            "「$tabTitle」目前沒有股票。這不代表市場裡沒有你要的代號，輸入搜尋即可查全部股票。"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(text)
+        if (state.sample) {
+            Text(
+                "目前是內建範例，只有少數股票。到「設定」把資料分支改成 $PREVIEW_DATA_BRANCH 並重新下載，才能查全市場。",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
 
 @Composable
-fun StockCard(row: ScreenRow, onClick: () -> Unit) {
+fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("${row.name} ${row.code}", fontWeight = FontWeight.SemiBold)
                 Text(marketLabel(row.market), style = MaterialTheme.typography.labelMedium)
+            }
+            membership?.let {
+                Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
             }
             Text(describePosition(row))
             Text(boxLine(row), style = MaterialTheme.typography.bodySmall)
@@ -212,10 +290,10 @@ private fun AdjustedChart(symbol: SymbolHistory, top: Double?, bottom: Double?) 
 }
 
 @Composable
-fun WatchScreen(state: UiState, onOpen: (String) -> Unit) {
+fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
     val rows = state.rows.filter { it.code in state.watchlist }
     Column(Modifier.fillMaxSize()) {
-        Header(state)
+        Header(state, onRetry)
         if (rows.isEmpty()) {
             Text(
                 "尚未加入自選股。可從每日清單點進個股後加入。加入後，背景工作會在資料更新時檢查突破與跌破。",
@@ -234,9 +312,15 @@ fun WatchScreen(state: UiState, onOpen: (String) -> Unit) {
 }
 
 @Composable
-fun ConditionScreen(state: UiState, onToggle: (String) -> Unit, onRun: () -> Unit, onOpen: (String) -> Unit) {
+fun ConditionScreen(
+    state: UiState,
+    onToggle: (String) -> Unit,
+    onRun: () -> Unit,
+    onOpen: (String) -> Unit,
+    onRetry: () -> Unit,
+) {
     Column(Modifier.fillMaxSize()) {
-        Header(state)
+        Header(state, onRetry)
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(16.dp),
@@ -334,10 +418,51 @@ fun SettingsScreen(
     onAlerts: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onRequestNotifications: () -> Unit,
+    onBranch: (String) -> Unit,
 ) {
     val params = state.params
+    var draft by rememberSaveable { mutableStateOf(state.dataBranch) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Header(state) }
+        item { Header(state, onRefresh) }
+        item { Text("資料來源", style = MaterialTheme.typography.titleMedium) }
+        item {
+            Text("合併到 main 之後，空白分支會自動讀全市場。合併前 main 沒有檔案，可先改成這次更新的分支。")
+        }
+        item {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("資料分支，空白表示 main") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { onBranch(draft) }),
+            )
+        }
+        item {
+            Text(
+                "目前使用 ${normalizeDataBranch(state.dataBranch)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(marketDocsUrl(state.dataBranch), style = MaterialTheme.typography.bodySmall)
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = {
+                    draft = ""
+                    onBranch("")
+                }) { Text("改回 main") }
+                TextButton(onClick = {
+                    draft = PREVIEW_DATA_BRANCH
+                    onBranch(PREVIEW_DATA_BRANCH)
+                }) { Text("這次更新的分支") }
+            }
+        }
+        item {
+            Button(onClick = { onBranch(draft) }, enabled = !state.loading) {
+                Text(if (state.loading) "更新中" else "用這個分支並重新下載")
+            }
+        }
         item { Text("箱型參數", style = MaterialTheme.typography.titleMedium) }
         item {
             SliderField("回看天數 ${params.lookbackDays}", params.lookbackDays.toFloat(), 20f, 120f) {
@@ -413,11 +538,16 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 }
 
 @Composable
-private fun Header(state: UiState) {
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+private fun Header(state: UiState, onRetry: (() -> Unit)? = null) {
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("資料日 ${formatDateText(state.asOf)}　${state.symbols.size} 檔", style = MaterialTheme.typography.labelLarge)
         if (state.sample) Text("目前是內建範例", color = MaterialTheme.colorScheme.primary)
         state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        if (onRetry != null && state.message != null) {
+            Button(onClick = onRetry, enabled = !state.loading) {
+                Text(if (state.loading) "更新中" else "重試")
+            }
+        }
     }
 }
 
