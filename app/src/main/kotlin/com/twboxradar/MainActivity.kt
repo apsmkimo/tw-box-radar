@@ -20,9 +20,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val ads = (application as RadarApplication).ads
+        ads.attach(this)
         setContent {
             RadarApp(
                 viewModel = viewModel,
+                ads = ads,
                 onRequestNotifications = {
                     if (Build.VERSION.SDK_INT >= 33) {
                         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)

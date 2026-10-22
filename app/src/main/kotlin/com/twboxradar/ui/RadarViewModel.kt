@@ -29,6 +29,7 @@ sealed interface Route {
     data object Settings : Route
     data class Detail(val code: String) : Route
     data class Backtest(val code: String) : Route
+    data object RemoveAds : Route
 }
 
 data class UiState(
@@ -123,6 +124,11 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(detailLoading = false) }
             }
         }
+    }
+
+    fun openRemoveAds() {
+        if (_state.value.route is Route.RemoveAds) return
+        push(Route.RemoveAds)
     }
 
     fun openBacktest(code: String) {
