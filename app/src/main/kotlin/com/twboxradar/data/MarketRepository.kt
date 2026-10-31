@@ -2,6 +2,8 @@ package com.twboxradar.data
 
 import android.content.Context
 import com.twboxradar.core.Bar
+import com.twboxradar.core.LimitMove
+import com.twboxradar.core.RiskFlags
 import com.twboxradar.core.PREVIEW_DATA_BRANCH
 import com.twboxradar.core.SymbolHistory
 import com.twboxradar.core.marketDocsUrl
@@ -20,7 +22,37 @@ data class LoadedMarket(
     val sourceUrl: String = "",
 )
 
+/** docs/flags.json。asOf 是行情資料日，riskAsOf 是注意／處置清單的日期。 */
+data class LoadedFlags(
+    val asOf: String = "",
+    val riskAsOf: String = "",
+    val flags: Map<String, RiskFlags> = emptyMap(),
+)
+
 class MarketRepository(private val context: Context) {
+    /**
+     * 注意／處置／漲跌停標籤。跟 window.json 一樣先比對 asOf 再決定要不要重抓。
+     * 下載失敗用快取；連快取都沒有就回空的，畫面只是不顯示標籤。
+     */
+    suspend fun loadFlags(force: Boolean, branch: String, asOf: String): LoadedFlags =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val file = cacheFile(branch, "flags.json")
+            val cached = if (file.exists()) runCatching { parseFlags(file.readText()) }.getOrNull() else null
+            if (!force && cached != null && cached.asOf == asOf && asOf.isNotEmpty()) {
+                return@withContext cached
+            }
+            try {
+                val text = http("${marketDocsUrl(branch)}/flags.json")
+                val parsed = parseFlags(text)
+                file.parentFile?.mkdirs()
+                file.writeText(text)
+                parsed
+            } catch (error: Exception) {
+                cached ?: LoadedFlags()
+            }
+        }
+
+
     // SMCPKG_SUPPORT>>>CursorXXX
     // suspend fun loadMarket(force: Boolean): LoadedMarket
     // 網址以前寫死 BuildConfig.DATA_BASE_URL（main）。main 還沒合併時會 404，只能看範例。
@@ -161,4 +193,33 @@ private fun readBars(barsJson: JSONArray): List<Bar> {
             )
         }
     }
+}
+
+fun parseFlags(text: String): LoadedFlags {
+    val root = JSONObject(text)
+    val items = root.optJSONObject("flags") ?: JSONObject()
+    val map = buildMap {
+        val keys = items.keys()
+        while (keys.hasNext()) {
+            val code = keys.next()
+            val item = items.optJSONObject(code) ?: continue
+            val period = item.optJSONArray("p")
+            val limit = when (item.optInt("l", 0)) {
+                1 -> LimitMove.UP
+                -1 -> LimitMove.DOWN
+                else -> LimitMove.NONE
+            }
+            put(
+                code,
+                RiskFlags(
+                    notice = item.optInt("n", 0) == 1,
+                    punishStart = period?.let { if (it.isNull(0)) null else it.optInt(0) },
+                    punishEnd = period?.let { if (it.length() < 2 || it.isNull(1)) null else it.optInt(1) },
+                    punishMeasure = if (item.has("pm")) item.optString("pm") else null,
+                    limit = limit,
+                ),
+            )
+        }
+    }
+    return LoadedFlags(root.optString("asOf"), root.optString("riskAsOf"), map)
 }

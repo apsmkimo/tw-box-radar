@@ -9,6 +9,8 @@ from pathlib import Path
 from .adjust import adjust_bars
 from .darvas import BoxParams, Status, evaluate
 from .exrights import load_event_map
+from .limits import limit_move, reference_price
+from .risk import load_risk
 from .store import SymbolSeries, load_symbols
 
 WINDOW_BARS = 180
@@ -52,6 +54,8 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
     adjusted_on = bool(events)
     adjusted_count = 0
     # SMCPKG_SUPPORT<<<CursorYYY
+    risk = load_risk(root)
+    limits: dict[str, tuple[str, int]] = {}
 
     for code in sorted(symbols):
         series = symbols[code]
@@ -76,8 +80,13 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
         window_symbols.append(_symbol_json(series, window))
         row = _screen_row(series, adjusted, params)
         # SMCPKG_SUPPORT<<<CursorYYY
+        move = _limit_today(series, events.get(code, []))
+        if move:
+            limits[code] = (move, series.bars[-1].date)
         if row is None:
             continue
+        if move:
+            row["limit"] = move
         status = row["status"]
         if status == Status.BREAKOUT.value:
             breakout.append(row)
@@ -129,6 +138,10 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
             "nearBottom": near_bottom,
         },
     )
+    # 停牌而最後一根不是資料日的股票，不標漲跌停。
+    today_limits = {code: move for code, (move, day) in limits.items() if day == as_of}
+    flags = build_flags(manifest["asOf"], risk, today_limits)
+    _dump(docs / "flags.json", flags)
     print(
         f"[publish] asOf={manifest['asOf']} symbols={len(universe)} "
         f"breakout={len(breakout)} inside={len(inside)} nearBottom={len(near_bottom)} "
@@ -136,6 +149,40 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
         flush=True,
     )
     return manifest
+
+
+def _limit_today(series: SymbolSeries, events) -> str | None:
+    """最後一根是否漲停／跌停。用成交原價，除權息當天的參考價乘上當天的價格因子。"""
+    if len(series.bars) < 2:
+        return None
+    prev, today = series.bars[-2], series.bars[-1]
+    factors = [event.price_factor for event in events if event.date == today.date]
+    reference = reference_price(prev.close, factors)
+    return limit_move(reference, today.close, today.high, today.low)
+
+
+def build_flags(as_of: str, risk: dict, limits: dict[str, str]) -> dict:
+    """docs/flags.json：只列出有標籤的代號。
+
+    n＝當天公布注意交易資訊；p＝[處置起日, 處置迄日]，pm＝處置措施；l＝1 漲停、-1 跌停。
+    注意／處置清單的日期若和行情資料日不同，仍照實寫在 riskAsOf，App 依此顯示。
+    """
+    flags: dict[str, dict] = {}
+    for code in risk.get("notice") or []:
+        flags.setdefault(code, {})["n"] = 1
+    for code, item in (risk.get("punish") or {}).items():
+        entry = flags.setdefault(code, {})
+        entry["p"] = [item.get("start"), item.get("end")]
+        entry["pm"] = item.get("measure") or "處置"
+    for code, move in limits.items():
+        flags.setdefault(code, {})["l"] = 1 if move == "up" else -1
+    return {
+        "asOf": as_of,
+        "riskAsOf": risk.get("asOf") or "",
+        "sources": risk.get("sources") or {},
+        "limitNote": "漲跌停以成交原價判斷：收盤價達到依升降單位計算的漲停價（跌停價）。除權息當天以官方參考價為基準。",
+        "flags": {code: flags[code] for code in sorted(flags)},
+    }
 
 
 def _screen_row(series: SymbolSeries, bars, params: BoxParams) -> dict | None:

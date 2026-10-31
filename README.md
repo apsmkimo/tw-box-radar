@@ -14,13 +14,15 @@ pipeline/            Python 3，只使用標準庫
 data/monthly/*.jsonl 歷史來源（一個月一個檔，只追加，存成交原價）
 data/state.json      已入庫與休市日期
 data/exrights.json   證交所、櫃買的除權息因子
+data/risk.json       最新交易日的注意股、處置股（每天覆寫，不留歷史）
         │
         ▼
 docs/                App 下載的靜態檔（同時可當 GitHub Pages 根目錄）
   manifest.json      資料日、檔數、是否還原權值
   universe.json      代號、名稱、市場
   window.json        近 180 個交易日，全市場，給清單／條件／自選
-  screens.json       預設參數下的三份清單（伺服器先算一份）
+  screens.json       預設參數下的三份清單（伺服器先算一份，列上有 limit 時表示收盤漲停／跌停）
+  flags.json         注意、處置（含起迄日）、漲停／跌停標籤，只列有標籤的代號
   bars/{代號}.json   單檔完整歷史（還原價；有除權息時另附 raw 成交原價）
         │
         ▼
@@ -44,6 +46,10 @@ App 的預設網址是 `https://raw.githubusercontent.com/apsmkimo/tw-box-radar/
 | 櫃買每日收盤 | `https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=YYYY/MM/DD&response=json` | 上櫃歷史。可指定日期。回應很大，因為含權證，程式只留下普通股 |
 | 櫃買 OpenAPI | `https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes` | 同樣只有最新交易日 |
 | 證交所除權息 | `https://www.twse.com.tw/exchangeReport/TWT49U?response=json&startDate=YYYYMMDD&endDate=YYYYMMDD` | 計算結果表。參數是 `startDate`，不是 `strDate`。含「權」的列再查 `TWT49UDetail` |
+| 證交所注意股 | `https://www.twse.com.tw/rwd/zh/announcement/notice?startDate=YYYYMMDD&endDate=YYYYMMDD&response=json` | 可指定日期。失敗時改用 OpenAPI `/v1/announcement/notice`（只有當天，非交易日回一列空白代號） |
+| 證交所處置股 | `https://openapi.twse.com.tw/v1/announcement/punish` | 目前處置中的證券，`DispositionPeriod` 形如 `115/10/28～115/11/03` |
+| 櫃買注意股 | `https://www.tpex.org.tw/openapi/v1/tpex_trading_warning_information` | 只有最新一天；日期和行情資料日不同時不採用 |
+| 櫃買處置股 | `https://www.tpex.org.tw/openapi/v1/tpex_disposal_information` | 近期公告，`DispositionPeriod` 形如 `1151030~1151105`，依迄日過濾。沒有「第幾次處置」欄位，只標「處置」 |
 | 櫃買除權息 | `https://www.tpex.org.tw/web/stock/exright/dailyquo/exDailyQ_result.php?l=zh-tw&d=ROC/MM/DD&ed=ROC/MM/DD&o=json` | 歷史區間要走這支舊網址。新的 `bulletin/exDailyQ` 會忽略日期 |
 
 其他限制：
@@ -77,6 +83,17 @@ python3 pipeline/backfill.py --start 20231016 --end 20261019 --sleep 3 --max-day
 4. 上市的配股率、認購率在 TWT49U 明細；上櫃在計算表的「每仟股無償配股」「按持股比例仟股認購」。ETF、特別股不算。前收或參考價不是正數的列略過。
 5. 員工分紅轉增資、公開承銷沒有「按持股比例」的比率，不進成交量因子。
 6. `data/exrights.json` 可中斷續傳。已結束超過 120 天的區間不再重抓；比較近的區間每次重抓。明細抓過就留著。每日管線會先更新因子再發佈，因此新除權息日會改寫更早的 `docs/`。
+
+## 注意股、處置股與漲跌停
+
+- `daily.py` 入庫之後，以最新一個已入庫的交易日抓上面四個清單，存 `data/risk.json`。每個來源各自失敗都不會中斷發佈，只在 `sources` 記 `error`，那部分標籤這次不出現。同一天重跑時，失敗的來源沿用上次成功的結果（記 `stale`）。
+- 只標 4 碼普通股。處置只留迄日不早於資料日的；已公告、隔天才開始的也會列出，App 顯示起迄日。
+- 漲跌停在發佈時用**成交原價**計算（`pipeline/twbox/limits.py`，Android 同一份在 `core/.../Limits.kt`）：
+  1. 參考價＝前一日收盤；除權息當天改用官方參考價（前收盤 × 當天的價格因子）。
+  2. 漲停價＝參考價 × 1.1 依升降單位無條件捨去；跌停價＝參考價 × 0.9 無條件進位。升降單位：未滿 10 元 0.01、10–50 元 0.05、50–100 元 0.1、100–500 元 0.5、500–1000 元 1、1000 元以上 5。
+  3. 收盤價 ≥ 漲停價記漲停，≤ 跌停價記跌停。另以「收盤＝最高（最低）且漲跌幅達 9.5%」當備援。新上市前幾天沒有漲跌幅限制，可能誤標。
+- `window.json` 是還原價。除權息日以外相鄰兩根的比值和成交價相同；除權息當天，還原後的前收盤正好是官方參考價。App 自己算時用「今天原價收盤 × 前一根還原收盤 ／ 今天還原收盤」當參考價。視窗檔沒有原價，升降單位可能對不上，靠 9.5% 備援。`flags.json` 的資料日和行情相同時，App 直接用它的漲跌停。
+- 回測設定可開「略過收盤漲停的突破」，預設關閉，原本的回測結果不變。
 
 ## 箱型演算法
 
@@ -164,13 +181,14 @@ App 內容：
 5. 設定可調回看天數、確認天數、是否用影線、接近箱底的區間比例、帶量倍數。
 6. 條件頁可把箱型、均線、KD、MACD、RSI、量能、布林通道用「而且」疊在一起。
 7. 單檔回測：交易清單、總報酬、勝率、最大回撤、對照買進持有。
+8. 清單列與個股頁顯示「注意」「處置至 MM/DD」「漲停」「跌停」小標籤；個股頁另列處置起迄日與清單日期。`flags.json` 讀不到時只是不顯示注意／處置，漲跌停改由 K 線自己算。
 
 第一次開啟要先看免責聲明。每個主畫面底部都有「資料僅供參考，不構成投資建議」。
 
 ## 測試
 
-- `pipeline/tests`：解析、箱型、假突破虧損、停損上移後的獲利、除權息還原與官方欄位解析。
-- `core/src/test`：同一組箱型案例、RSI／均線／MACD／布林、條件的 AND，以及用詞不含「建議買／建議賣」。
+- `pipeline/tests`：解析、箱型、假突破虧損、停損上移後的獲利、除權息還原與官方欄位解析、注意／處置清單解析、漲跌停價與升降單位。
+- `core/src/test`：同一組箱型案例、RSI／均線／MACD／布林、條件的 AND、漲跌停判斷（含除權息日參考價）與回測略過漲停，以及用詞不含「建議買／建議賣」。
 
 ```bash
 cd pipeline && python3 -m unittest discover -s tests -v
