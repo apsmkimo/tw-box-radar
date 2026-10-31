@@ -1,6 +1,8 @@
 package com.twboxradar.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -52,6 +54,8 @@ import com.twboxradar.core.Trade
 import com.twboxradar.core.conditionCatalog
 import com.twboxradar.core.describeNet
 import com.twboxradar.core.describePosition
+import com.twboxradar.core.describeQuality
+import com.twboxradar.core.RowSort
 import com.twboxradar.core.describeRevenue
 import com.twboxradar.core.marketDocsUrl
 import com.twboxradar.core.marketLabel
@@ -90,10 +94,12 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
     var market by rememberSaveable { mutableStateOf("all") }
+    var sortName by rememberSaveable { mutableStateOf(RowSort.CODE.name) }
+    val sort = RowSort.entries.firstOrNull { it.name == sortName } ?: RowSort.CODE
     val focus = LocalFocusManager.current
     val titles = listOf("今日突破箱頂", "箱型內整理中", "接近箱底")
     val statuses = listOf(BoxStatus.BREAKOUT, BoxStatus.INSIDE, BoxStatus.NEAR_BOTTOM)
-    val shown = visibleRows(state.rows, statuses[tab], market, query)
+    val shown = visibleRows(state.rows, statuses[tab], market, query, sort)
     val searching = query.isNotBlank()
     Column(Modifier.fillMaxSize()) {
         Header(state, onRetry)
@@ -125,6 +131,18 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("all" to "全部", "twse" to "上市", "tpex" to "上櫃").forEach { (id, label) ->
                 FilterChip(selected = market == id, onClick = { market = id }, label = { Text(label) })
+            }
+        }
+        Row(
+            Modifier
+                .padding(horizontal = 16.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("排序", style = MaterialTheme.typography.labelMedium)
+            RowSort.entries.forEach { option ->
+                FilterChip(selected = sort == option, onClick = { sortName = option.name }, label = { Text(option.label) })
             }
         }
         if (searching && shown.size == 1) {
@@ -217,6 +235,7 @@ fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null, c
             }
             Text(describePosition(row))
             Text(boxLine(row), style = MaterialTheme.typography.bodySmall)
+            Text(describeQuality(row), style = MaterialTheme.typography.bodySmall)
             Text(
                 buildString {
                     append(formatRatio(row.volumeRatio))
@@ -273,6 +292,11 @@ fun DetailScreen(state: UiState, code: String, onWatch: () -> Unit, onBacktest: 
                 Text(describePosition(row), fontWeight = FontWeight.Medium)
                 Text(boxLine(row))
                 Text("箱頂日 ${formatDate(row.topDate)}　箱底日 ${formatDate(row.bottomDate)}")
+                Text(describeQuality(row))
+                Text(
+                    "RS 是 60／120 日報酬在全市場的百分位（100 最強）。箱內量是箱頂以來均量除以箱頂前 20 日均量，小於 1 表示量縮。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 // SMCPKG_SUPPORT>>>CursorXXX
                 // Text("價格未還原除權息。${DISCLAIMER}", style = MaterialTheme.typography.bodySmall)
                 Text("箱型依還原價計算。${DISCLAIMER}", style = MaterialTheme.typography.bodySmall)

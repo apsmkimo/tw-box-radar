@@ -10,6 +10,7 @@ from .adjust import adjust_bars
 from .darvas import BoxParams, Status, evaluate
 from .exrights import load_event_map
 from .limits import limit_move, reference_price
+from .quality import RS_LONG, RS_SHORT, box_quality, percentile_ranks, period_return
 from .risk import load_risk
 from . import chips as chips_mod
 from . import revenue as revenue_mod
@@ -57,6 +58,8 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
     adjusted_count = 0
     # SMCPKG_SUPPORT<<<CursorYYY
     risk = load_risk(root)
+    returns_short: dict[str, float] = {}
+    returns_long: dict[str, float] = {}
     limits: dict[str, tuple[str, int]] = {}
 
     for code in sorted(symbols):
@@ -80,6 +83,10 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
         universe.append({"c": code, "n": series.name, "m": series.market})
         window = adjusted[-window_bars:]
         window_symbols.append(_symbol_json(series, window))
+        for period, target in ((RS_SHORT, returns_short), (RS_LONG, returns_long)):
+            value = period_return(adjusted, period)
+            if value is not None:
+                target[code] = value
         row = _screen_row(series, adjusted, params)
         # SMCPKG_SUPPORT<<<CursorYYY
         move = _limit_today(series, events.get(code, []))
@@ -97,6 +104,11 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
         elif status == Status.NEAR_BOTTOM.value:
             near_bottom.append(row)
 
+    rs_short = percentile_ranks(returns_short)
+    rs_long = percentile_ranks(returns_long)
+    for row in (*breakout, *inside, *near_bottom):
+        row["rs60"] = rs_short.get(row["c"])
+        row["rs120"] = rs_long.get(row["c"])
     breakout.sort(key=lambda item: item.get("volumeRatio") or 0, reverse=True)
     inside.sort(key=lambda item: (item["top"] - item["bottom"]) / item["bottom"])
     near_bottom.sort(key=lambda item: item["rangePosition"])
@@ -227,6 +239,8 @@ def _screen_row(series: SymbolSeries, bars, params: BoxParams) -> dict | None:
         return None
     span = snap.box.top - snap.box.bottom
     position = (snap.close - snap.box.bottom) / span if span else 0.0
+    quality = box_quality(bars, snap.box) or {}
+    contraction = quality.get("volumeContraction")
     return {
         "c": series.code,
         "n": series.name,
@@ -242,6 +256,9 @@ def _screen_row(series: SymbolSeries, bars, params: BoxParams) -> dict | None:
         "volumeRatio": None if snap.volume_ratio is None else round(snap.volume_ratio, 4),
         "volumeConfirmed": snap.volume_confirmed,
         "rangePosition": round(position, 6),
+        "boxDays": quality.get("boxDays"),
+        "boxWidth": None if "boxWidth" not in quality else round(quality["boxWidth"], 6),
+        "volumeContraction": None if contraction is None else round(contraction, 4),
     }
 
 
