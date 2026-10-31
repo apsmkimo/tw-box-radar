@@ -22,6 +22,11 @@ class Prefs(context: Context) {
         get() = sp.getStringSet(KEY_NOTIFIED, emptySet())?.toSet() ?: emptySet()
         set(value) = sp.edit().putStringSet(KEY_NOTIFIED, value.toSet()).apply()
 
+    /** 提醒最後處理過的資料日（manifest asOf）。同一個資料日不重複下載、不重複通知。 */
+    var lastAlertAsOf: String
+        get() = sp.getString(KEY_LAST_ALERT_AS_OF, "") ?: ""
+        set(value) = sp.edit().putString(KEY_LAST_ALERT_AS_OF, value).apply()
+
     // SMCPKG_SUPPORT>>>CursorXXX
     /** 空白表示 main。合併前可改成預覽分支，先下載全市場。 */
     var dataBranch: String
@@ -63,6 +68,7 @@ class Prefs(context: Context) {
         private const val KEY_VOLUME = "volume"
         private const val KEY_VOLUME_ENTRY = "volume_entry"
         private const val KEY_BRANCH = "data_branch"
+        private const val KEY_LAST_ALERT_AS_OF = "last_alert_as_of"
         private const val KEY_SKIP_LIMIT_UP = "skip_limit_up"
     }
 }
