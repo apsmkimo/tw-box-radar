@@ -20,6 +20,10 @@ import com.twboxradar.core.DISCLAIMER
 import com.twboxradar.core.analyze
 import com.twboxradar.data.MarketRepository
 import com.twboxradar.data.Prefs
+import java.time.DayOfWeek
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 class RadarWorker(
     context: Context,
@@ -28,21 +32,36 @@ class RadarWorker(
     override suspend fun doWork(): Result {
         val prefs = Prefs(applicationContext)
         if (!prefs.alertsEnabled || prefs.watchlist.isEmpty()) return Result.success()
-        // SMCPKG_SUPPORT>>>CursorXXX
-        // val loaded = MarketRepository(applicationContext).loadMarket(force = true)
-        val loaded = MarketRepository(applicationContext).loadMarket(force = true, branch = prefs.dataBranch)
-        // SMCPKG_SUPPORT<<<CursorYYY
-        if (loaded.sample || loaded.asOf.isBlank()) return Result.retry()
+        val repository = MarketRepository(applicationContext)
+        val branch = prefs.dataBranch
+
+        // 先只看 manifest（約 1KB）。資料日沒變就不下載任何行情。
+        val asOf = try {
+            repository.fetchAsOf(branch)
+        } catch (error: Exception) {
+            return Result.retry()
+        }
+        if (asOf.isBlank()) return Result.retry()
+        if (asOf == prefs.lastAlertAsOf) {
+            // 收盤資料可能還沒發佈（排程 16:30／18:30）。交易日晚上稍後再試。
+            return if (shouldWaitForToday(asOf)) Result.retry() else Result.success()
+        }
+
         val watched = prefs.watchlist
+        val symbols = try {
+            repository.loadSymbols(watched, branch)
+        } catch (error: Exception) {
+            return Result.retry()
+        }
         val lines = mutableListOf<String>()
         val keys = mutableSetOf<String>()
-        loaded.symbols.filter { it.code in watched }.map { analyze(it, prefs.boxParams()) }.forEach { row ->
+        symbols.map { analyze(it, prefs.boxParams()) }.forEach { row ->
             val event = when {
                 row.status == BoxStatus.BREAKOUT && row.volumeConfirmed -> "breakout"
                 row.status == BoxStatus.BREAKDOWN -> "breakdown"
                 else -> return@forEach
             }
-            val key = "${loaded.asOf}|${row.code}|$event"
+            val key = "$asOf|${row.code}|$event"
             keys += key
             if (key in prefs.notified) return@forEach
             lines += when (event) {
@@ -53,8 +72,19 @@ class RadarWorker(
         if (lines.isNotEmpty() && canNotify()) {
             show(lines)
         }
-        if (keys.isNotEmpty()) prefs.notified = prefs.notified + keys
+        // 只保留這個資料日的紀錄，避免 notified 無限增長。
+        prefs.notified = keys
+        prefs.lastAlertAsOf = asOf
         return Result.success()
+    }
+
+    /** 台北時間平日、23:00 以前，且資料日還不是今天：今天的收盤可能還沒發佈。 */
+    private fun shouldWaitForToday(asOf: String): Boolean {
+        val now = ZonedDateTime.now(TAIPEI)
+        val weekend = now.dayOfWeek == DayOfWeek.SATURDAY || now.dayOfWeek == DayOfWeek.SUNDAY
+        if (weekend || now.hour >= 23) return false
+        if (runAttemptCount >= MAX_WAIT_ATTEMPTS) return false
+        return asOf != now.format(DateTimeFormatter.BASIC_ISO_DATE)
     }
 
     private fun canNotify(): Boolean {
@@ -93,6 +123,8 @@ class RadarWorker(
     companion object {
         const val CHANNEL_ID = "box-radar"
         private const val NOTIFICATION_ID = 42
+        private const val MAX_WAIT_ATTEMPTS = 6
+        val TAIPEI: ZoneId = ZoneId.of("Asia/Taipei")
 
         fun ensureChannel(context: Context) {
             val manager = context.getSystemService(NotificationManager::class.java)

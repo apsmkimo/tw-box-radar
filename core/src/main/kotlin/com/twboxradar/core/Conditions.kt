@@ -21,6 +21,11 @@ sealed class Condition {
     data object CloseAboveBollingerMid : Condition()
     data object CloseAboveBollingerUpper : Condition()
     data object CloseBelowBollingerLower : Condition()
+    // 以下需要 docs/chips.json。沒有資料的股票一律不符合。
+    data class TrustBuyStreak(val days: Int) : Condition()
+    data object ForeignFiveDayNetBuy : Condition()
+    data class RevenueYoyAbove(val fraction: Double) : Condition()
+    data object RevenueTwelveMonthHigh : Condition()
 }
 
 data class ConditionChoice(
@@ -50,14 +55,25 @@ fun conditionCatalog(): List<ConditionChoice> = listOf(
     ConditionChoice("bb_mid", "收盤站上布林中軌", Condition.CloseAboveBollingerMid),
     ConditionChoice("bb_up", "收盤突破布林上軌", Condition.CloseAboveBollingerUpper),
     ConditionChoice("bb_dn", "收盤跌破布林下軌", Condition.CloseBelowBollingerLower),
+    ConditionChoice("trust3", "投信連買 3 天", Condition.TrustBuyStreak(3)),
+    ConditionChoice("trust5", "投信連買 5 天", Condition.TrustBuyStreak(5)),
+    ConditionChoice("foreign5", "外資 5 日買超", Condition.ForeignFiveDayNetBuy),
+    ConditionChoice("rev_yoy20", "營收年增 > 20%", Condition.RevenueYoyAbove(0.20)),
+    ConditionChoice("rev_yoy50", "營收年增 > 50%", Condition.RevenueYoyAbove(0.50)),
+    ConditionChoice("rev_high", "營收創 12 個月新高", Condition.RevenueTwelveMonthHigh),
 )
 
-fun matchesAll(symbol: SymbolHistory, conditions: List<Condition>, params: BoxParams): Boolean {
+fun matchesAll(
+    symbol: SymbolHistory,
+    conditions: List<Condition>,
+    params: BoxParams,
+    fundamentals: Fundamentals? = null,
+): Boolean {
     if (conditions.isEmpty() || symbol.bars.isEmpty()) return false
-    return conditions.all { matches(symbol, it, params) }
+    return conditions.all { matches(symbol, it, params, fundamentals) }
 }
 
-fun matches(symbol: SymbolHistory, condition: Condition, params: BoxParams): Boolean {
+fun matches(symbol: SymbolHistory, condition: Condition, params: BoxParams, fundamentals: Fundamentals? = null): Boolean {
     val bars = symbol.bars
     val closes = bars.map { it.close }
     val row = analyze(symbol, params)
@@ -113,6 +129,16 @@ fun matches(symbol: SymbolHistory, condition: Condition, params: BoxParams): Boo
             val lower = bollinger(closes).lower.last() ?: return false
             closes.last() < lower
         }
+        is Condition.TrustBuyStreak -> (fundamentals?.chips?.trustBuyStreak ?: 0) >= condition.days
+        Condition.ForeignFiveDayNetBuy -> {
+            val chips = fundamentals?.chips ?: return false
+            (fundamentals?.chipDays ?: 0) >= 5 && chips.foreign5 > 0
+        }
+        is Condition.RevenueYoyAbove -> {
+            val yoy = fundamentals?.revenue?.yoy ?: return false
+            yoy > condition.fraction
+        }
+        Condition.RevenueTwelveMonthHigh -> fundamentals?.revenue?.twelveMonthHigh == true
     }
 }
 

@@ -22,6 +22,11 @@ class Prefs(context: Context) {
         get() = sp.getStringSet(KEY_NOTIFIED, emptySet())?.toSet() ?: emptySet()
         set(value) = sp.edit().putStringSet(KEY_NOTIFIED, value.toSet()).apply()
 
+    /** 提醒最後處理過的資料日（manifest asOf）。同一個資料日不重複下載、不重複通知。 */
+    var lastAlertAsOf: String
+        get() = sp.getString(KEY_LAST_ALERT_AS_OF, "") ?: ""
+        set(value) = sp.edit().putString(KEY_LAST_ALERT_AS_OF, value).apply()
+
     // SMCPKG_SUPPORT>>>CursorXXX
     /** 空白表示 main。合併前可改成預覽分支，先下載全市場。 */
     var dataBranch: String
@@ -48,6 +53,7 @@ class Prefs(context: Context) {
         nearRangeFraction = sp.getFloat(KEY_NEAR, 0.2f).toDouble(),
         volumeMultiple = sp.getFloat(KEY_VOLUME, 1.5f).toDouble(),
         requireVolumeForEntry = sp.getBoolean(KEY_VOLUME_ENTRY, false),
+        skipLimitUpEntry = sp.getBoolean(KEY_SKIP_LIMIT_UP, false),
     )
 
     fun saveParams(params: BoxParams) {
@@ -58,6 +64,7 @@ class Prefs(context: Context) {
             .putFloat(KEY_NEAR, params.nearRangeFraction.toFloat())
             .putFloat(KEY_VOLUME, params.volumeMultiple.toFloat())
             .putBoolean(KEY_VOLUME_ENTRY, params.requireVolumeForEntry)
+            .putBoolean(KEY_SKIP_LIMIT_UP, params.skipLimitUpEntry)
             .apply()
     }
 
@@ -76,5 +83,7 @@ class Prefs(context: Context) {
         private const val KEY_REMOVE_ADS = "remove_ads"
         private const val KEY_DEBUG_REMOVE_ADS = "debug_remove_ads"
         private const val KEY_APP_OPEN_AT = "app_open_at"
+        private const val KEY_LAST_ALERT_AS_OF = "last_alert_as_of"
+        private const val KEY_SKIP_LIMIT_UP = "skip_limit_up"
     }
 }

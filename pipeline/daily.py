@@ -18,6 +18,9 @@ from twbox.exrights import refresh_exrights  # noqa: E402
 from twbox.fetch import fetch_day  # noqa: E402
 from twbox.http_client import HttpClient  # noqa: E402
 from twbox.publish import publish  # noqa: E402
+from twbox.chips import refresh_chips  # noqa: E402
+from twbox.revenue import refresh_revenue  # noqa: E402
+from twbox.risk import refresh_risk  # noqa: E402
 from twbox.store import append_day, load_state, save_state  # noqa: E402
 
 
@@ -37,6 +40,8 @@ def main() -> int:
     # SMCPKG_SUPPORT<<<CursorYYY
     if not pending:
         print("[daily] 沒有待抓日期", flush=True)
+        _refresh_risk(state)
+        _refresh_extras(state, [])
         publish(ROOT)
         return 0
 
@@ -44,6 +49,7 @@ def main() -> int:
     tpex_client = HttpClient(min_interval=3.0)
     today_key = yyyymmdd(today)
     changed = False
+    fetched: list[int] = []
     for day in pending:
         key = yyyymmdd(day)
         print(f"[daily] 抓取 {key}", flush=True)
@@ -52,6 +58,7 @@ def main() -> int:
             append_day(ROOT, int(key), rows)
             completed.add(key)
             changed = True
+            fetched.append(int(key))
             state["completed"] = sorted(completed)
             save_state(ROOT, state)
         elif status == "closed" and key != today_key:
@@ -66,10 +73,43 @@ def main() -> int:
             return 1
     # SMCPKG_SUPPORT>>>CursorXXX
     # if changed or not (ROOT / "docs" / "manifest.json").exists():
-    if changed or factors_changed or not (ROOT / "docs" / "manifest.json").exists():
+    risk_changed = _refresh_risk(state)
+    extras_changed = _refresh_extras(state, fetched)
+    if changed or factors_changed or risk_changed or extras_changed or not (ROOT / "docs" / "manifest.json").exists():
         # SMCPKG_SUPPORT<<<CursorYYY
         publish(ROOT)
     return 0
+
+
+def _refresh_risk(state: dict) -> bool:
+    """注意／處置清單以最新入庫的交易日為準。失敗不影響行情發佈。"""
+    completed = state.get("completed") or []
+    if not completed:
+        return False
+    try:
+        return refresh_risk(ROOT, HttpClient(min_interval=3.0), int(max(completed)))
+    except Exception as exc:  # noqa: BLE001 — 標籤是附加資訊
+        print(f"[daily] 注意／處置清單更新失敗，這次不標：{exc}", flush=True)
+        return False
+
+
+def _refresh_extras(state: dict, fetched: list[int]) -> bool:
+    """三大法人只抓這次入庫的日期與最新交易日，不回補；營收抓最新月並補一兩頁歷史。都 fail-soft。"""
+    completed = state.get("completed") or []
+    if not completed:
+        return False
+    days = sorted({*fetched, int(max(completed))})
+    changed = False
+    client = HttpClient(min_interval=3.0)
+    try:
+        changed |= refresh_chips(ROOT, client, days)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] 三大法人更新失敗：{exc}", flush=True)
+    try:
+        changed |= refresh_revenue(ROOT, client, seed_pages=2)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] 營收更新失敗：{exc}", flush=True)
+    return changed
 
 
 def _refresh_factors() -> bool:
