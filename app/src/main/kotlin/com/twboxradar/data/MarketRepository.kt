@@ -89,6 +89,27 @@ class MarketRepository(private val context: Context) {
             }
         }
 
+    /** 只抓 manifest.json（約 1KB）取得資料日。失敗時丟出例外。 */
+    suspend fun fetchAsOf(branch: String): String =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            JSONObject(http("${marketDocsUrl(branch)}/manifest.json")).optString("asOf")
+        }
+
+    /**
+     * 只下載自選股的單檔歷史（bars/{代號}.json），不下載 16MB 的 window.json。
+     * 任何一檔抓不到就丟出例外，讓呼叫端稍後重試，避免用舊快取發出錯誤通知。
+     */
+    suspend fun loadSymbols(codes: Collection<String>, branch: String): List<SymbolHistory> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            codes.sorted().map { code ->
+                val text = http("${marketDocsUrl(branch)}/bars/$code.json")
+                val file = cacheFile(branch, "bars/$code.json")
+                file.parentFile?.mkdirs()
+                file.writeText(text)
+                parseSymbol(JSONObject(text))
+            }
+        }
+
     private fun cacheFile(branch: String, name: String): File {
         val folder = normalizeDataBranch(branch).replace('/', '_')
         return File(context.filesDir, "market/$folder/$name")
