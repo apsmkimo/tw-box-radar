@@ -6,11 +6,18 @@ import androidx.lifecycle.viewModelScope
 import com.twboxradar.core.BacktestResult
 import com.twboxradar.core.BoxParams
 import com.twboxradar.core.BoxStatus
+import com.twboxradar.core.LimitMove
+import com.twboxradar.core.RiskFlags
 import com.twboxradar.core.ScreenRow
 import com.twboxradar.core.SymbolHistory
 import com.twboxradar.core.analyze
 import com.twboxradar.core.backtest
 import com.twboxradar.core.conditionCatalog
+import com.twboxradar.core.lastLimitMove
+import com.twboxradar.core.riskChips
+import com.twboxradar.core.withRelativeStrength
+import com.twboxradar.data.LoadedChips
+import com.twboxradar.data.LoadedFlags
 import com.twboxradar.core.matchesAll
 import com.twboxradar.data.MarketRepository
 import com.twboxradar.data.Prefs
@@ -49,6 +56,10 @@ data class UiState(
     val backtest: BacktestResult? = null,
     val backtestLoading: Boolean = false,
     val dataBranch: String = "",
+    // 代號 → 標籤（注意、處置至 MM/DD、漲停、跌停）。沒有標籤的代號不在表裡。
+    val chips: Map<String, List<String>> = emptyMap(),
+    val flags: LoadedFlags = LoadedFlags(),
+    val fundamentals: LoadedChips = LoadedChips(),
 )
 
 class RadarViewModel(app: Application) : AndroidViewModel(app) {
@@ -78,9 +89,23 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
             val loaded = repository.loadMarket(force, _state.value.dataBranch)
             // SMCPKG_SUPPORT<<<CursorYYY
             val params = _state.value.params
-            val rows = withContext(Dispatchers.Default) { loaded.symbols.map { analyze(it, params) } }
+            val rows = withContext(Dispatchers.Default) { computeRows(loaded.symbols, params) }
+            val flags = if (loaded.sample) {
+                LoadedFlags()
+            } else {
+                repository.loadFlags(force, _state.value.dataBranch, loaded.asOf)
+            }
+            val chips = withContext(Dispatchers.Default) { buildChips(loaded.symbols, flags, loaded.asOf) }
+            val fundamentals = if (loaded.sample) {
+                LoadedChips()
+            } else {
+                repository.loadChips(force, _state.value.dataBranch, loaded.asOf)
+            }
             _state.update {
                 it.copy(
+                    fundamentals = fundamentals,
+                    chips = chips,
+                    flags = flags,
                     loading = false,
                     message = loaded.message,
                     sample = loaded.sample,
@@ -116,7 +141,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
                 val params = _state.value.params
                 val replaced = _state.value.symbols.map { if (it.code == code) full else it }
                 val rows = withContext(Dispatchers.Default) {
-                    replaced.map { symbol -> analyze(symbol, params) }
+                    computeRows(replaced, params)
                 }
                 _state.update { it.copy(symbols = replaced, rows = rows, detailLoading = false) }
             } else {
@@ -130,7 +155,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _state.update { it.copy(backtestLoading = true, backtest = null) }
             val symbol = _state.value.symbols.firstOrNull { it.code == code } ?: return@launch
-            val result = withContext(Dispatchers.Default) { backtest(symbol.bars, _state.value.params) }
+            val result = withContext(Dispatchers.Default) { backtest(symbol.bars, _state.value.params, symbol.rawBars) }
             _state.update { it.copy(backtestLoading = false, backtest = result) }
         }
     }
@@ -151,7 +176,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
         prefs.saveParams(params)
         viewModelScope.launch {
             val rows = withContext(Dispatchers.Default) {
-                _state.value.symbols.map { analyze(it, params) }
+                computeRows(_state.value.symbols, params)
             }
             _state.update { it.copy(params = params, rows = rows, conditionHits = null, backtest = null) }
         }
@@ -179,9 +204,15 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
             val selected = _state.value.selectedConditions
             val conditions = conditionCatalog().filter { it.id in selected }.map { it.condition }
             val params = _state.value.params
+            val extra = _state.value.fundamentals.items
+            val rowsByCode = _state.value.rows.associateBy { it.code }
             val hits = withContext(Dispatchers.Default) {
                 _state.value.symbols.mapNotNull { symbol ->
-                    if (matchesAll(symbol, conditions, params)) analyze(symbol, params) else null
+                    if (matchesAll(symbol, conditions, params, extra[symbol.code])) {
+                        rowsByCode[symbol.code] ?: analyze(symbol, params)
+                    } else {
+                        null
+                    }
                 }
             }
             _state.update { it.copy(conditionHits = hits) }
@@ -195,6 +226,27 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
     private fun push(route: Route) {
         backStack.addLast(_state.value.route)
         _state.update { it.copy(route = route) }
+    }
+}
+
+/** 每檔的箱型狀態與品質，再填上全市場 RS 百分位。 */
+fun computeRows(symbols: List<SymbolHistory>, params: BoxParams): List<ScreenRow> =
+    withRelativeStrength(symbols.map { analyze(it, params) }, symbols)
+
+/**
+ * flags.json 的資料日和行情相同時，漲跌停用它（成交原價算的）。
+ * 不同或沒有檔案時，改用 K 線自己算；注意／處置仍照檔案顯示，畫面另外寫清單日期。
+ */
+fun buildChips(symbols: List<SymbolHistory>, flags: LoadedFlags, asOf: String): Map<String, List<String>> {
+    val fresh = flags.asOf.isNotEmpty() && flags.asOf == asOf
+    return buildMap {
+        for (symbol in symbols) {
+            val item: RiskFlags? = flags.flags[symbol.code]?.let { if (fresh) it else it.copy(limit = LimitMove.NONE) }
+            val current = symbol.bars.lastOrNull()?.date?.toString() == asOf
+            val fallback = if (fresh || !current) LimitMove.NONE else lastLimitMove(symbol)
+            val chips = riskChips(item, fallback)
+            if (chips.isNotEmpty()) put(symbol.code, chips)
+        }
     }
 }
 

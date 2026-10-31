@@ -41,6 +41,7 @@ class Prefs(context: Context) {
         nearRangeFraction = sp.getFloat(KEY_NEAR, 0.2f).toDouble(),
         volumeMultiple = sp.getFloat(KEY_VOLUME, 1.5f).toDouble(),
         requireVolumeForEntry = sp.getBoolean(KEY_VOLUME_ENTRY, false),
+        skipLimitUpEntry = sp.getBoolean(KEY_SKIP_LIMIT_UP, false),
     )
 
     fun saveParams(params: BoxParams) {
@@ -51,6 +52,7 @@ class Prefs(context: Context) {
             .putFloat(KEY_NEAR, params.nearRangeFraction.toFloat())
             .putFloat(KEY_VOLUME, params.volumeMultiple.toFloat())
             .putBoolean(KEY_VOLUME_ENTRY, params.requireVolumeForEntry)
+            .putBoolean(KEY_SKIP_LIMIT_UP, params.skipLimitUpEntry)
             .apply()
     }
 
@@ -67,5 +69,6 @@ class Prefs(context: Context) {
         private const val KEY_VOLUME_ENTRY = "volume_entry"
         private const val KEY_BRANCH = "data_branch"
         private const val KEY_LAST_ALERT_AS_OF = "last_alert_as_of"
+        private const val KEY_SKIP_LIMIT_UP = "skip_limit_up"
     }
 }

@@ -1,5 +1,8 @@
 package com.twboxradar.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,6 +36,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -46,7 +52,11 @@ import com.twboxradar.core.ScreenRow
 import com.twboxradar.core.SymbolHistory
 import com.twboxradar.core.Trade
 import com.twboxradar.core.conditionCatalog
+import com.twboxradar.core.describeNet
 import com.twboxradar.core.describePosition
+import com.twboxradar.core.describeQuality
+import com.twboxradar.core.RowSort
+import com.twboxradar.core.describeRevenue
 import com.twboxradar.core.marketDocsUrl
 import com.twboxradar.core.marketLabel
 import com.twboxradar.core.membershipLabel
@@ -84,10 +94,12 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
     var market by rememberSaveable { mutableStateOf("all") }
+    var sortName by rememberSaveable { mutableStateOf(RowSort.CODE.name) }
+    val sort = RowSort.entries.firstOrNull { it.name == sortName } ?: RowSort.CODE
     val focus = LocalFocusManager.current
     val titles = listOf("今日突破箱頂", "箱型內整理中", "接近箱底")
     val statuses = listOf(BoxStatus.BREAKOUT, BoxStatus.INSIDE, BoxStatus.NEAR_BOTTOM)
-    val shown = visibleRows(state.rows, statuses[tab], market, query)
+    val shown = visibleRows(state.rows, statuses[tab], market, query, sort)
     val searching = query.isNotBlank()
     Column(Modifier.fillMaxSize()) {
         Header(state, onRetry)
@@ -119,6 +131,18 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("all" to "全部", "twse" to "上市", "tpex" to "上櫃").forEach { (id, label) ->
                 FilterChip(selected = market == id, onClick = { market = id }, label = { Text(label) })
+            }
+        }
+        Row(
+            Modifier
+                .padding(horizontal = 16.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("排序", style = MaterialTheme.typography.labelMedium)
+            RowSort.entries.forEach { option ->
+                FilterChip(selected = sort == option, onClick = { sortName = option.name }, label = { Text(option.label) })
             }
         }
         if (searching && shown.size == 1) {
@@ -157,6 +181,7 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
                     row,
                     onClick = { onOpen(row.code) },
                     membership = if (searching) membershipLabel(row.status) else null,
+                    chips = state.chips[row.code].orEmpty(),
                 )
             }
         }
@@ -191,11 +216,18 @@ private fun EmptyListMessage(state: UiState, searching: Boolean, market: String,
 }
 
 @Composable
-fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null) {
+fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null, chips: List<String> = emptyList()) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Text("${row.name} ${row.code}", fontWeight = FontWeight.SemiBold)
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("${row.name} ${row.code}", fontWeight = FontWeight.SemiBold)
+                    RiskChipRow(chips)
+                }
                 Text(marketLabel(row.market), style = MaterialTheme.typography.labelMedium)
             }
             membership?.let {
@@ -203,6 +235,7 @@ fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null) {
             }
             Text(describePosition(row))
             Text(boxLine(row), style = MaterialTheme.typography.bodySmall)
+            Text(describeQuality(row), style = MaterialTheme.typography.bodySmall)
             Text(
                 buildString {
                     append(formatRatio(row.volumeRatio))
@@ -211,6 +244,30 @@ fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null) {
                     }
                 },
                 style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+/** 注意／處置／漲停／跌停小標籤。紅漲綠跌，注意與處置用橘色。 */
+@Composable
+fun RiskChipRow(chips: List<String>) {
+    if (chips.isEmpty()) return
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        chips.forEach { label ->
+            val color = when {
+                label == "漲停" -> Color(0xFFC62828)
+                label == "跌停" -> Color(0xFF2E7D32)
+                else -> Color(0xFFE65100)
+            }
+            Text(
+                label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(color)
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
             )
         }
     }
@@ -229,9 +286,17 @@ fun DetailScreen(state: UiState, code: String, onWatch: () -> Unit, onBacktest: 
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("${symbol.name} ${symbol.code}", style = MaterialTheme.typography.headlineSmall)
                 Text("${marketLabel(symbol.market)}　資料日 ${formatDateText(state.asOf)}")
+                RiskChipRow(state.chips[code].orEmpty())
+                riskDetail(state, code)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                FundamentalsBlock(state, code)
                 Text(describePosition(row), fontWeight = FontWeight.Medium)
                 Text(boxLine(row))
                 Text("箱頂日 ${formatDate(row.topDate)}　箱底日 ${formatDate(row.bottomDate)}")
+                Text(describeQuality(row))
+                Text(
+                    "RS 是 60／120 日報酬在全市場的百分位（100 最強）。箱內量是箱頂以來均量除以箱頂前 20 日均量，小於 1 表示量縮。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 // SMCPKG_SUPPORT>>>CursorXXX
                 // Text("價格未還原除權息。${DISCLAIMER}", style = MaterialTheme.typography.bodySmall)
                 Text("箱型依還原價計算。${DISCLAIMER}", style = MaterialTheme.typography.bodySmall)
@@ -306,7 +371,9 @@ fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(rows, key = { it.code }) { row -> StockCard(row, onClick = { onOpen(row.code) }) }
+            items(rows, key = { it.code }) { row ->
+                StockCard(row, onClick = { onOpen(row.code) }, chips = state.chips[row.code].orEmpty())
+            }
         }
     }
 }
@@ -329,6 +396,10 @@ fun ConditionScreen(
             item {
                 Text("勾選的條件全部同時成立（而且）才會列入結果。")
                 Text("例如：突破箱頂，而且收盤站上 20 日均線，而且 KD 黃金交叉。")
+                Text(
+                    "法人與營收條件需要下載 chips.json；法人資料從 ${formatDateText(state.fundamentals.chipStart).ifEmpty { "開始累積那天" }} 起算，沒有資料的股票不列入。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -349,7 +420,9 @@ fun ConditionScreen(
             val hits = state.conditionHits
             if (hits != null) {
                 item { Text("符合 ${hits.size} 檔", fontWeight = FontWeight.Medium) }
-                items(hits, key = { it.code }) { row -> StockCard(row, onClick = { onOpen(row.code) }) }
+                items(hits, key = { it.code }) { row ->
+                    StockCard(row, onClick = { onOpen(row.code) }, chips = state.chips[row.code].orEmpty())
+                }
             }
         }
     }
@@ -370,6 +443,9 @@ fun BacktestScreen(state: UiState, code: String) {
         // Text("以收盤價模擬成交，不計手續費與稅。價格未還原除權息，區間盤的假突破會出現在交易清單。")
         Text("以還原後的收盤價模擬成交，不計手續費與稅。區間盤的假突破會出現在交易清單。")
         // SMCPKG_SUPPORT<<<CursorYYY
+        if (state.params.skipLimitUpEntry) {
+            Text("已略過收盤漲停的突破，這幾天不進場。", style = MaterialTheme.typography.bodySmall)
+        }
         Text(DISCLAIMER, style = MaterialTheme.typography.bodySmall)
         if (state.backtestLoading || state.backtest == null) {
             CircularProgressIndicator()
@@ -501,6 +577,11 @@ fun SettingsScreen(
             }
         }
         item {
+            SwitchRow("回測略過收盤漲停的突破（漲停價常無法成交）", params.skipLimitUpEntry) {
+                onParams(params.copy(skipLimitUpEntry = it))
+            }
+        }
+        item {
             SwitchRow("自選股突破／跌破提醒", state.alertsEnabled) {
                 onAlerts(it)
                 if (it) onRequestNotifications()
@@ -549,6 +630,48 @@ private fun Header(state: UiState, onRetry: (() -> Unit)? = null) {
             }
         }
     }
+}
+
+/** 個股頁的三大法人與月營收。沒有資料就整段不顯示。 */
+@Composable
+private fun FundamentalsBlock(state: UiState, code: String) {
+    val data = state.fundamentals.items[code] ?: return
+    val chips = data.chips
+    val revenue = data.revenue
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (chips != null) {
+            Text("三大法人買賣超", style = MaterialTheme.typography.titleSmall)
+            Text(describeNet("外資", chips.foreign5, chips.foreign20, data.chipDays))
+            Text(describeNet("投信", chips.trust5, chips.trust20, data.chipDays))
+            Text(describeNet("自營", chips.dealer5, chips.dealer20, data.chipDays))
+            if (chips.trustBuyStreak > 0) Text("投信連續買超 ${chips.trustBuyStreak} 天", style = MaterialTheme.typography.bodySmall)
+            if (chips.foreignBuyStreak > 0) Text("外資連續買超 ${chips.foreignBuyStreak} 天", style = MaterialTheme.typography.bodySmall)
+            val range = state.fundamentals
+            Text(
+                "法人資料自 ${formatDateText(range.chipStart)} 起累積，目前 ${range.chipDays} 個交易日。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (revenue != null) {
+            Text("月營收", style = MaterialTheme.typography.titleSmall)
+            Text(describeRevenue(revenue))
+        }
+    }
+}
+
+/** 個股頁的注意／處置說明。清單日期和行情不同時寫出清單日期。 */
+private fun riskDetail(state: UiState, code: String): String? {
+    val item = state.flags.flags[code] ?: return null
+    val parts = mutableListOf<String>()
+    if (item.notice) parts += "當日列入公布注意交易資訊"
+    val end = item.punishEnd
+    if (end != null) {
+        val measure = item.punishMeasure?.takeIf { it.isNotBlank() } ?: "處置"
+        parts += "處置期間 ${formatDate(item.punishStart)} 至 ${formatDate(end)}（$measure）"
+    }
+    if (parts.isEmpty()) return null
+    val dated = if (state.flags.riskAsOf.isNotEmpty()) "清單日期 ${formatDateText(state.flags.riskAsOf)}" else ""
+    return (parts + listOfNotNull(dated.ifEmpty { null })).joinToString("。")
 }
 
 private fun pct(value: Double): String = String.format(Locale.US, "%+.1f%%", value * 100.0)

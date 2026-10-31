@@ -30,7 +30,13 @@ fun membershipLabel(status: BoxStatus): String = when (status) {
  * 沒有搜尋字時只留目前分頁。有搜尋字時改查全部股票，分頁不再把結果濾掉。
  * 市場篩選兩種情況都保留。
  */
-fun visibleRows(rows: List<ScreenRow>, tab: BoxStatus, market: String, query: String): List<ScreenRow> {
+fun visibleRows(
+    rows: List<ScreenRow>,
+    tab: BoxStatus,
+    market: String,
+    query: String,
+    sort: RowSort = RowSort.CODE,
+): List<ScreenRow> {
     val text = query.trim()
     val searching = text.isNotEmpty()
     return rows
@@ -42,7 +48,14 @@ fun visibleRows(rows: List<ScreenRow>, tab: BoxStatus, market: String, query: St
             val tabOk = searching || row.status == tab
             marketOk && textOk && tabOk
         }
-        .sortedWith(compareBy<ScreenRow> { if (searching) searchRank(it, text) else 0 }.thenBy { it.code })
+        .let { filtered ->
+            // 搜尋時以符合程度排序；沒有搜尋字時用使用者選的排序。
+            if (searching) {
+                filtered.sortedWith(compareBy<ScreenRow> { searchRank(it, text) }.thenBy { it.code })
+            } else {
+                sortRows(filtered, sort)
+            }
+        }
 }
 
 private fun searchRank(row: ScreenRow, query: String): Int = when {
