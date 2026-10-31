@@ -1,16 +1,24 @@
 package com.twboxradar.ui
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -29,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,17 +45,22 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.twboxradar.ads.NativeAdCard
 import com.twboxradar.core.BacktestResult
 import com.twboxradar.core.BoxParams
 import com.twboxradar.core.BoxStatus
 import com.twboxradar.core.DISCLAIMER
+import com.twboxradar.core.ListSlot
 import com.twboxradar.core.PREVIEW_DATA_BRANCH
 import com.twboxradar.core.ScreenRow
 import com.twboxradar.core.SymbolHistory
@@ -54,6 +68,7 @@ import com.twboxradar.core.Trade
 import com.twboxradar.core.conditionCatalog
 import com.twboxradar.core.describeNet
 import com.twboxradar.core.describePosition
+import com.twboxradar.core.insertAdSlots
 import com.twboxradar.core.describeQuality
 import com.twboxradar.core.RowSort
 import com.twboxradar.core.describeRevenue
@@ -87,7 +102,7 @@ fun DisclaimerScreen(onAccept: () -> Unit) {
 }
 
 @Composable
-fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
+fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit, showAds: Boolean) {
     // SMCPKG_SUPPORT>>>CursorXXX
     // fun ListScreen(state: UiState, onOpen: (String) -> Unit)
     // 搜尋以前只過濾目前分頁，所以在「今日突破箱頂」輸入 2330 會得到 0 檔。
@@ -105,21 +120,45 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
         Header(state, onRetry)
         TabRow(selectedTabIndex = tab) {
             titles.forEachIndexed { index, title ->
-                Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+                Tab(
+                    selected = tab == index,
+                    onClick = { tab = index },
+                    text = {
+                        Text(
+                            title,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            letterSpacing = (-0.4).sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                        )
+                    },
+                )
             }
         }
-        OutlinedTextField(
+        val searchInteraction = remember { MutableInteractionSource() }
+        val searchFocused by searchInteraction.collectIsFocusedAsState()
+        BasicTextField(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            label = { Text("搜尋代號或名稱") },
-            placeholder = { Text("例如 2330 或 台積電") },
-            supportingText = {
-                Text(if (searching) "正在查全部股票，不受上方分頁限制。點一下結果即可開啟。" else "輸入後會改查全部股票，不限目前這個分頁。")
-            },
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .height(40.dp)
+                .border(
+                    width = 1.dp,
+                    color = if (searchFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    shape = RoundedCornerShape(4.dp),
+                )
+                .padding(horizontal = 12.dp),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 15.sp,
+            ),
             singleLine = true,
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(
                 onSearch = {
@@ -127,6 +166,27 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
                     focus.clearFocus()
                 },
             ),
+            interactionSource = searchInteraction,
+            decorationBox = { inner ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+                    if (query.isEmpty()) {
+                        Text(
+                            "搜尋代號或名稱",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+        Text(
+            if (searching) "正在查全部股票，不受上方分頁限制。點一下結果即可開啟。" else "輸入後會改查全部股票，不限目前這個分頁。",
+            modifier = Modifier.padding(horizontal = 28.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("all" to "全部", "twse" to "上市", "tpex" to "上櫃").forEach { (id, label) ->
@@ -176,14 +236,7 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
             if (shown.isEmpty()) {
                 item { EmptyListMessage(state, searching, market, query.trim(), titles[tab]) }
             }
-            items(shown, key = { it.code }) { row ->
-                StockCard(
-                    row,
-                    onClick = { onOpen(row.code) },
-                    membership = if (searching) membershipLabel(row.status) else null,
-                    chips = state.chips[row.code].orEmpty(),
-                )
-            }
+            stockEntries(shown, showAds = showAds, membership = searching, chips = state.chips, onOpen = onOpen)
         }
     }
     // SMCPKG_SUPPORT<<<CursorYYY
@@ -211,6 +264,35 @@ private fun EmptyListMessage(state: UiState, searching: Boolean, market: String,
                 "目前是內建範例，只有少數股票。到「設定」把資料分支改成 $PREVIEW_DATA_BRANCH 並重新下載，才能查全市場。",
                 style = MaterialTheme.typography.bodySmall,
             )
+        }
+    }
+}
+
+private fun LazyListScope.stockEntries(
+    rows: List<ScreenRow>,
+    showAds: Boolean,
+    membership: Boolean,
+    chips: Map<String, List<String>>,
+    onOpen: (String) -> Unit,
+) {
+    val slots = insertAdSlots(rows, enabled = showAds)
+    items(
+        slots,
+        key = { slot ->
+            when (slot) {
+                is ListSlot.Item -> slot.value.code
+                is ListSlot.Ad -> "ad-${slot.afterCount}"
+            }
+        },
+    ) { slot ->
+        when (slot) {
+            is ListSlot.Item -> StockCard(
+                slot.value,
+                onClick = { onOpen(slot.value.code) },
+                membership = if (membership) membershipLabel(slot.value.status) else null,
+                chips = chips[slot.value.code].orEmpty(),
+            )
+            is ListSlot.Ad -> NativeAdCard(enabled = true)
         }
     }
 }
@@ -355,7 +437,7 @@ private fun AdjustedChart(symbol: SymbolHistory, top: Double?, bottom: Double?) 
 }
 
 @Composable
-fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
+fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit, showAds: Boolean) {
     val rows = state.rows.filter { it.code in state.watchlist }
     Column(Modifier.fillMaxSize()) {
         Header(state, onRetry)
@@ -371,9 +453,7 @@ fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(rows, key = { it.code }) { row ->
-                StockCard(row, onClick = { onOpen(row.code) }, chips = state.chips[row.code].orEmpty())
-            }
+            stockEntries(rows, showAds = showAds, membership = false, chips = state.chips, onOpen = onOpen)
         }
     }
 }
@@ -385,6 +465,7 @@ fun ConditionScreen(
     onRun: () -> Unit,
     onOpen: (String) -> Unit,
     onRetry: () -> Unit,
+    showAds: Boolean,
 ) {
     Column(Modifier.fillMaxSize()) {
         Header(state, onRetry)
@@ -420,9 +501,7 @@ fun ConditionScreen(
             val hits = state.conditionHits
             if (hits != null) {
                 item { Text("符合 ${hits.size} 檔", fontWeight = FontWeight.Medium) }
-                items(hits, key = { it.code }) { row ->
-                    StockCard(row, onClick = { onOpen(row.code) }, chips = state.chips[row.code].orEmpty())
-                }
+                stockEntries(hits, showAds = showAds, membership = false, chips = state.chips, onOpen = onOpen)
             }
         }
     }

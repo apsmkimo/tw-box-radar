@@ -34,6 +34,18 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putString(KEY_BRANCH, value.trim()).apply()
     // SMCPKG_SUPPORT<<<CursorYYY
 
+    var removeAdsOwned: Boolean
+        get() = sp.getBoolean(KEY_REMOVE_ADS, false)
+        set(value) = sp.edit().putBoolean(KEY_REMOVE_ADS, value).apply()
+
+    var debugRemoveAds: Boolean
+        get() = sp.getBoolean(KEY_DEBUG_REMOVE_ADS, false)
+        set(value) = sp.edit().putBoolean(KEY_DEBUG_REMOVE_ADS, value).apply()
+
+    var appOpenShownAt: Long
+        get() = sp.getLong(KEY_APP_OPEN_AT, 0L)
+        set(value) = sp.edit().putLong(KEY_APP_OPEN_AT, value).apply()
+
     fun boxParams(): BoxParams = BoxParams(
         lookbackDays = sp.getInt(KEY_LOOKBACK, 60),
         confirmationDays = sp.getInt(KEY_CONFIRM, 3),
@@ -68,6 +80,9 @@ class Prefs(context: Context) {
         private const val KEY_VOLUME = "volume"
         private const val KEY_VOLUME_ENTRY = "volume_entry"
         private const val KEY_BRANCH = "data_branch"
+        private const val KEY_REMOVE_ADS = "remove_ads"
+        private const val KEY_DEBUG_REMOVE_ADS = "debug_remove_ads"
+        private const val KEY_APP_OPEN_AT = "app_open_at"
         private const val KEY_LAST_ALERT_AS_OF = "last_alert_as_of"
         private const val KEY_SKIP_LIMIT_UP = "skip_limit_up"
     }

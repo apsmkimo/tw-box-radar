@@ -7,6 +7,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.twboxradar.ads.AdsController
 import com.twboxradar.work.RadarWorker
 import java.time.Duration
 import java.time.LocalTime
@@ -14,8 +15,13 @@ import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
 class RadarApplication : Application() {
+    lateinit var ads: AdsController
+        private set
+
     override fun onCreate() {
         super.onCreate()
+        ads = AdsController(this)
+        ads.install()
         RadarWorker.ensureChannel(this)
         // 行情每天收盤後發佈一次（16:30／18:30 台北），所以一天檢查一次，從 19:30 開始。
         // 資料還沒出來時 Worker 會回傳 retry，每 30 分鐘左右再試，最晚到 23:00。

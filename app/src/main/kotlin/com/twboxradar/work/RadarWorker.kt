@@ -106,7 +106,10 @@ class RadarWorker(
         val style = NotificationCompat.InboxStyle().setBigContentTitle("自選股箱型變動")
         lines.take(8).forEach { style.addLine(it) }
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher)
+            // SMCPKG_SUPPORT>>>CursorXXX
+            // .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            // SMCPKG_SUPPORT<<<CursorYYY
             .setContentTitle("自選股箱型變動")
             .setContentText(lines.first())
             .setStyle(style)
