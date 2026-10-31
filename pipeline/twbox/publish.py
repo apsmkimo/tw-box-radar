@@ -11,6 +11,8 @@ from .darvas import BoxParams, Status, evaluate
 from .exrights import load_event_map
 from .limits import limit_move, reference_price
 from .risk import load_risk
+from . import chips as chips_mod
+from . import revenue as revenue_mod
 from .store import SymbolSeries, load_symbols
 
 WINDOW_BARS = 180
@@ -142,6 +144,7 @@ def publish(root: Path, window_bars: int = WINDOW_BARS) -> dict:
     today_limits = {code: move for code, (move, day) in limits.items() if day == as_of}
     flags = build_flags(manifest["asOf"], risk, today_limits)
     _dump(docs / "flags.json", flags)
+    _dump(docs / "chips.json", build_chips(root, manifest["asOf"], keep))
     print(
         f"[publish] asOf={manifest['asOf']} symbols={len(universe)} "
         f"breakout={len(breakout)} inside={len(inside)} nearBottom={len(near_bottom)} "
@@ -182,6 +185,36 @@ def build_flags(as_of: str, risk: dict, limits: dict[str, str]) -> dict:
         "sources": risk.get("sources") or {},
         "limitNote": "漲跌停以成交原價判斷：收盤價達到依升降單位計算的漲停價（跌停價）。除權息當天以官方參考價為基準。",
         "flags": {code: flags[code] for code in sorted(flags)},
+    }
+
+
+def build_chips(root: Path, as_of: str, codes: set[str]) -> dict:
+    """docs/chips.json：三大法人近 5／20 日買賣超（張）、連買天數與最新月營收。
+
+    i＝[外資5日, 外資20日, 投信5日, 投信20日, 自營5日, 自營20日, 投信連買天數, 外資連買天數]
+    r＝[資料月 YYYYMM, 營收(千元), 年增率, 月增率, 創 12 個月新高 1／0／null]
+    chipDays 是目前累積的交易日數；不足 20 天時，20 日欄位只是已累積天數的合計。
+    """
+    days = chips_mod.load_days(root)
+    insti = chips_mod.summarize(days)
+    revenue = revenue_mod.summarize(revenue_mod.load_revenue(root))
+    items: dict[str, dict] = {}
+    for code in sorted(codes):
+        entry: dict = {}
+        if code in insti:
+            entry["i"] = insti[code]
+        if code in revenue:
+            entry["r"] = revenue[code]
+        if entry:
+            items[code] = entry
+    return {
+        "asOf": as_of,
+        "chipDays": len(days),
+        "chipStart": f"{days[0][0]:08d}" if days else "",
+        "chipEnd": f"{days[-1][0]:08d}" if days else "",
+        "unit": "張",
+        "revenueUnit": "千元",
+        "items": items,
     }
 
 

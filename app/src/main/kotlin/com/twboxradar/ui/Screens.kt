@@ -50,7 +50,9 @@ import com.twboxradar.core.ScreenRow
 import com.twboxradar.core.SymbolHistory
 import com.twboxradar.core.Trade
 import com.twboxradar.core.conditionCatalog
+import com.twboxradar.core.describeNet
 import com.twboxradar.core.describePosition
+import com.twboxradar.core.describeRevenue
 import com.twboxradar.core.marketDocsUrl
 import com.twboxradar.core.marketLabel
 import com.twboxradar.core.membershipLabel
@@ -267,6 +269,7 @@ fun DetailScreen(state: UiState, code: String, onWatch: () -> Unit, onBacktest: 
                 Text("${marketLabel(symbol.market)}　資料日 ${formatDateText(state.asOf)}")
                 RiskChipRow(state.chips[code].orEmpty())
                 riskDetail(state, code)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                FundamentalsBlock(state, code)
                 Text(describePosition(row), fontWeight = FontWeight.Medium)
                 Text(boxLine(row))
                 Text("箱頂日 ${formatDate(row.topDate)}　箱底日 ${formatDate(row.bottomDate)}")
@@ -369,6 +372,10 @@ fun ConditionScreen(
             item {
                 Text("勾選的條件全部同時成立（而且）才會列入結果。")
                 Text("例如：突破箱頂，而且收盤站上 20 日均線，而且 KD 黃金交叉。")
+                Text(
+                    "法人與營收條件需要下載 chips.json；法人資料從 ${formatDateText(state.fundamentals.chipStart).ifEmpty { "開始累積那天" }} 起算，沒有資料的股票不列入。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -597,6 +604,33 @@ private fun Header(state: UiState, onRetry: (() -> Unit)? = null) {
             Button(onClick = onRetry, enabled = !state.loading) {
                 Text(if (state.loading) "更新中" else "重試")
             }
+        }
+    }
+}
+
+/** 個股頁的三大法人與月營收。沒有資料就整段不顯示。 */
+@Composable
+private fun FundamentalsBlock(state: UiState, code: String) {
+    val data = state.fundamentals.items[code] ?: return
+    val chips = data.chips
+    val revenue = data.revenue
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (chips != null) {
+            Text("三大法人買賣超", style = MaterialTheme.typography.titleSmall)
+            Text(describeNet("外資", chips.foreign5, chips.foreign20, data.chipDays))
+            Text(describeNet("投信", chips.trust5, chips.trust20, data.chipDays))
+            Text(describeNet("自營", chips.dealer5, chips.dealer20, data.chipDays))
+            if (chips.trustBuyStreak > 0) Text("投信連續買超 ${chips.trustBuyStreak} 天", style = MaterialTheme.typography.bodySmall)
+            if (chips.foreignBuyStreak > 0) Text("外資連續買超 ${chips.foreignBuyStreak} 天", style = MaterialTheme.typography.bodySmall)
+            val range = state.fundamentals
+            Text(
+                "法人資料自 ${formatDateText(range.chipStart)} 起累積，目前 ${range.chipDays} 個交易日。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (revenue != null) {
+            Text("月營收", style = MaterialTheme.typography.titleSmall)
+            Text(describeRevenue(revenue))
         }
     }
 }
