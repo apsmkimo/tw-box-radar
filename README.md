@@ -15,6 +15,8 @@ data/monthly/*.jsonl 歷史來源（一個月一個檔，只追加，存成交�
 data/state.json      已入庫與休市日期
 data/exrights.json   證交所、櫃買的除權息因子
 data/risk.json       最新交易日的注意股、處置股（每天覆寫，不留歷史）
+data/chips/*.json    三大法人每日買賣超（一天一檔，只留最近 60 個交易日）
+data/revenue.json    月營收（每檔最近 15 個月，千元）
         │
         ▼
 docs/                App 下載的靜態檔（同時可當 GitHub Pages 根目錄）
@@ -23,6 +25,7 @@ docs/                App 下載的靜態檔（同時可當 GitHub Pages 根目�
   window.json        近 180 個交易日，全市場，給清單／條件／自選
   screens.json       預設參數下的三份清單（伺服器先算一份，列上有 limit 時表示收盤漲停／跌停）
   flags.json         注意、處置（含起迄日）、漲停／跌停標籤，只列有標籤的代號
+  chips.json         三大法人 5／20 日買賣超（張）、連買天數，以及最新月營收、年增、月增、是否創 12 個月新高
   bars/{代號}.json   單檔完整歷史（還原價；有除權息時另附 raw 成交原價）
         │
         ▼
@@ -50,6 +53,11 @@ App 的預設網址是 `https://raw.githubusercontent.com/apsmkimo/tw-box-radar/
 | 證交所處置股 | `https://openapi.twse.com.tw/v1/announcement/punish` | 目前處置中的證券，`DispositionPeriod` 形如 `115/10/28～115/11/03` |
 | 櫃買注意股 | `https://www.tpex.org.tw/openapi/v1/tpex_trading_warning_information` | 只有最新一天；日期和行情資料日不同時不採用 |
 | 櫃買處置股 | `https://www.tpex.org.tw/openapi/v1/tpex_disposal_information` | 近期公告，`DispositionPeriod` 形如 `1151030~1151105`，依迄日過濾。沒有「第幾次處置」欄位，只標「處置」 |
+| 證交所三大法人 | `https://www.twse.com.tw/rwd/zh/fund/T86?date=YYYYMMDD&selectType=ALLBUT0999&response=json` | 可指定日期。外資＝外陸資（不含外資自營商）＋外資自營商 |
+| 櫃買三大法人 | `https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&sect=EW&date=YYYY/MM/DD&response=json` | 可指定日期。欄名重複，依位置讀（第 10 欄外資合計、13 投信、22 自營合計、23 三大法人合計），並檢查三者相加＝合計。備援 OpenAPI `tpex_3insti_daily_trading`（只有最新一天） |
+| 上市月營收 | `https://openapi.twse.com.tw/v1/opendata/t187ap05_L` | 只有最新月。欄位：資料年月、公司代號、營業收入-當月營收／上月營收／去年當月營收 |
+| 上櫃月營收 | `https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O` | 欄位同上市 |
+| 觀測站月營收彙總表 | `https://mopsov.twse.com.tw/nas/t21/{sii,otc}/t21sc03_民國年_月_{0,1}.html` | Big5 靜態頁，0 國內、1 外國（KY）公司。只用來補最近 12 個月 |
 | 櫃買除權息 | `https://www.tpex.org.tw/web/stock/exright/dailyquo/exDailyQ_result.php?l=zh-tw&d=ROC/MM/DD&ed=ROC/MM/DD&o=json` | 歷史區間要走這支舊網址。新的 `bulletin/exDailyQ` 會忽略日期 |
 
 其他限制：
@@ -94,6 +102,14 @@ python3 pipeline/backfill.py --start 20231016 --end 20261019 --sleep 3 --max-day
   3. 收盤價 ≥ 漲停價記漲停，≤ 跌停價記跌停。另以「收盤＝最高（最低）且漲跌幅達 9.5%」當備援。新上市前幾天沒有漲跌幅限制，可能誤標。
 - `window.json` 是還原價。除權息日以外相鄰兩根的比值和成交價相同；除權息當天，還原後的前收盤正好是官方參考價。App 自己算時用「今天原價收盤 × 前一根還原收盤 ／ 今天還原收盤」當參考價。視窗檔沒有原價，升降單位可能對不上，靠 9.5% 備援。`flags.json` 的資料日和行情相同時，App 直接用它的漲跌停。
 - 回測設定可開「略過收盤漲停的突破」，預設關閉，原本的回測結果不變。
+
+## 三大法人與月營收
+
+- **三大法人不回補歷史**，從這個功能上線那天開始累積。`daily.py` 只抓這次入庫的交易日與最新交易日，上市、上櫃都拿到才存檔，否則下次排程再試。只留最近 60 個交易日。
+- `chips.json` 的 `chipDays` 是目前累積的天數。不足 20 天時，「20 日」其實是已累積天數的合計，App 會照實寫成「N 日」。
+- 買賣超單位是張（股數 ÷ 1000 四捨五入）。當天不在名單上的股票視為 0。連買天數是從最新一天往回數淨買超 > 0 的連續天數。
+- 月營收每次排程抓最新月（OpenAPI 同時給上月與去年同月），再用觀測站彙總表一次最多補兩個月份頁，幾天內補滿近 12 個月。年增、月增用存下的數字自己算；「創 12 個月新高」是當月 ≥ 前 11 個月最大值，前 11 個月缺資料時顯示「資料不足」。
+- 全部 fail-soft：任何來源失敗都不會中斷行情發佈。
 
 ## 箱型演算法
 
@@ -182,13 +198,14 @@ App 內容：
 6. 條件頁可把箱型、均線、KD、MACD、RSI、量能、布林通道用「而且」疊在一起。
 7. 單檔回測：交易清單、總報酬、勝率、最大回撤、對照買進持有。
 8. 清單列與個股頁顯示「注意」「處置至 MM/DD」「漲停」「跌停」小標籤；個股頁另列處置起迄日與清單日期。`flags.json` 讀不到時只是不顯示注意／處置，漲跌停改由 K 線自己算。
+9. 個股頁顯示外資／投信／自營 5 日與 20 日買賣超（張）、連買天數，以及月營收年增、月增、是否創 12 個月新高。條件頁可再疊「投信連買 3／5 天」「外資 5 日買超」「營收年增 > 20%／50%」「營收創 12 個月新高」，沒有資料的股票不列入。
 
 第一次開啟要先看免責聲明。每個主畫面底部都有「資料僅供參考，不構成投資建議」。
 
 ## 測試
 
-- `pipeline/tests`：解析、箱型、假突破虧損、停損上移後的獲利、除權息還原與官方欄位解析、注意／處置清單解析、漲跌停價與升降單位。
-- `core/src/test`：同一組箱型案例、RSI／均線／MACD／布林、條件的 AND、漲跌停判斷（含除權息日參考價）與回測略過漲停，以及用詞不含「建議買／建議賣」。
+- `pipeline/tests`：解析、箱型、假突破虧損、停損上移後的獲利、除權息還原與官方欄位解析、注意／處置清單解析、漲跌停價與升降單位、T86／櫃買法人與月營收解析、連買天數、年增月增與 12 個月新高。
+- `core/src/test`：同一組箱型案例、RSI／均線／MACD／布林、條件的 AND、漲跌停判斷（含除權息日參考價）與回測略過漲停、法人與營收條件，以及用詞不含「建議買／建議賣」。
 
 ```bash
 cd pipeline && python3 -m unittest discover -s tests -v

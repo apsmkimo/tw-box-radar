@@ -2,6 +2,9 @@ package com.twboxradar.data
 
 import android.content.Context
 import com.twboxradar.core.Bar
+import com.twboxradar.core.ChipSummary
+import com.twboxradar.core.Fundamentals
+import com.twboxradar.core.RevenueSummary
 import com.twboxradar.core.LimitMove
 import com.twboxradar.core.RiskFlags
 import com.twboxradar.core.PREVIEW_DATA_BRANCH
@@ -29,7 +32,35 @@ data class LoadedFlags(
     val flags: Map<String, RiskFlags> = emptyMap(),
 )
 
+/** docs/chips.json。chipStart～chipEnd 是已累積的法人資料區間。 */
+data class LoadedChips(
+    val asOf: String = "",
+    val chipDays: Int = 0,
+    val chipStart: String = "",
+    val chipEnd: String = "",
+    val items: Map<String, Fundamentals> = emptyMap(),
+)
+
 class MarketRepository(private val context: Context) {
+    /** 法人與營收。快取規則同 flags.json，失敗就回空的，畫面只是少這兩段。 */
+    suspend fun loadChips(force: Boolean, branch: String, asOf: String): LoadedChips =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val file = cacheFile(branch, "chips.json")
+            val cached = if (file.exists()) runCatching { parseChips(file.readText()) }.getOrNull() else null
+            if (!force && cached != null && cached.asOf == asOf && asOf.isNotEmpty()) {
+                return@withContext cached
+            }
+            try {
+                val text = http("${marketDocsUrl(branch)}/chips.json")
+                val parsed = parseChips(text)
+                file.parentFile?.mkdirs()
+                file.writeText(text)
+                parsed
+            } catch (error: Exception) {
+                cached ?: LoadedChips()
+            }
+        }
+
     /**
      * 注意／處置／漲跌停標籤。跟 window.json 一樣先比對 asOf 再決定要不要重抓。
      * 下載失敗用快取；連快取都沒有就回空的，畫面只是不顯示標籤。
@@ -222,4 +253,52 @@ fun parseFlags(text: String): LoadedFlags {
         }
     }
     return LoadedFlags(root.optString("asOf"), root.optString("riskAsOf"), map)
+}
+
+fun parseChips(text: String): LoadedChips {
+    val root = JSONObject(text)
+    val chipDays = root.optInt("chipDays", 0)
+    val items = root.optJSONObject("items") ?: JSONObject()
+    val map = buildMap {
+        val keys = items.keys()
+        while (keys.hasNext()) {
+            val code = keys.next()
+            val item = items.optJSONObject(code) ?: continue
+            val insti = item.optJSONArray("i")
+            val chips = if (insti != null && insti.length() >= 8) {
+                ChipSummary(
+                    foreign5 = insti.optInt(0),
+                    foreign20 = insti.optInt(1),
+                    trust5 = insti.optInt(2),
+                    trust20 = insti.optInt(3),
+                    dealer5 = insti.optInt(4),
+                    dealer20 = insti.optInt(5),
+                    trustBuyStreak = insti.optInt(6),
+                    foreignBuyStreak = insti.optInt(7),
+                )
+            } else {
+                null
+            }
+            val rev = item.optJSONArray("r")
+            val revenue = if (rev != null && rev.length() >= 5) {
+                RevenueSummary(
+                    month = rev.optInt(0),
+                    revenue = rev.optLong(1),
+                    yoy = if (rev.isNull(2)) null else rev.optDouble(2),
+                    mom = if (rev.isNull(3)) null else rev.optDouble(3),
+                    twelveMonthHigh = if (rev.isNull(4)) null else rev.optInt(4) == 1,
+                )
+            } else {
+                null
+            }
+            put(code, Fundamentals(chips, revenue, chipDays))
+        }
+    }
+    return LoadedChips(
+        asOf = root.optString("asOf"),
+        chipDays = chipDays,
+        chipStart = root.optString("chipStart"),
+        chipEnd = root.optString("chipEnd"),
+        items = map,
+    )
 }

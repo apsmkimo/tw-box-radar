@@ -15,6 +15,7 @@ import com.twboxradar.core.backtest
 import com.twboxradar.core.conditionCatalog
 import com.twboxradar.core.lastLimitMove
 import com.twboxradar.core.riskChips
+import com.twboxradar.data.LoadedChips
 import com.twboxradar.data.LoadedFlags
 import com.twboxradar.core.matchesAll
 import com.twboxradar.data.MarketRepository
@@ -57,6 +58,7 @@ data class UiState(
     // 代號 → 標籤（注意、處置至 MM/DD、漲停、跌停）。沒有標籤的代號不在表裡。
     val chips: Map<String, List<String>> = emptyMap(),
     val flags: LoadedFlags = LoadedFlags(),
+    val fundamentals: LoadedChips = LoadedChips(),
 )
 
 class RadarViewModel(app: Application) : AndroidViewModel(app) {
@@ -93,8 +95,14 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
                 repository.loadFlags(force, _state.value.dataBranch, loaded.asOf)
             }
             val chips = withContext(Dispatchers.Default) { buildChips(loaded.symbols, flags, loaded.asOf) }
+            val fundamentals = if (loaded.sample) {
+                LoadedChips()
+            } else {
+                repository.loadChips(force, _state.value.dataBranch, loaded.asOf)
+            }
             _state.update {
                 it.copy(
+                    fundamentals = fundamentals,
                     chips = chips,
                     flags = flags,
                     loading = false,
@@ -195,9 +203,10 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
             val selected = _state.value.selectedConditions
             val conditions = conditionCatalog().filter { it.id in selected }.map { it.condition }
             val params = _state.value.params
+            val extra = _state.value.fundamentals.items
             val hits = withContext(Dispatchers.Default) {
                 _state.value.symbols.mapNotNull { symbol ->
-                    if (matchesAll(symbol, conditions, params)) analyze(symbol, params) else null
+                    if (matchesAll(symbol, conditions, params, extra[symbol.code])) analyze(symbol, params) else null
                 }
             }
             _state.update { it.copy(conditionHits = hits) }
