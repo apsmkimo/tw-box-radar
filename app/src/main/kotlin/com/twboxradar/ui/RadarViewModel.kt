@@ -15,6 +15,7 @@ import com.twboxradar.core.backtest
 import com.twboxradar.core.conditionCatalog
 import com.twboxradar.core.lastLimitMove
 import com.twboxradar.core.riskChips
+import com.twboxradar.core.withRelativeStrength
 import com.twboxradar.data.LoadedChips
 import com.twboxradar.data.LoadedFlags
 import com.twboxradar.core.matchesAll
@@ -88,7 +89,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
             val loaded = repository.loadMarket(force, _state.value.dataBranch)
             // SMCPKG_SUPPORT<<<CursorYYY
             val params = _state.value.params
-            val rows = withContext(Dispatchers.Default) { loaded.symbols.map { analyze(it, params) } }
+            val rows = withContext(Dispatchers.Default) { computeRows(loaded.symbols, params) }
             val flags = if (loaded.sample) {
                 LoadedFlags()
             } else {
@@ -140,7 +141,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
                 val params = _state.value.params
                 val replaced = _state.value.symbols.map { if (it.code == code) full else it }
                 val rows = withContext(Dispatchers.Default) {
-                    replaced.map { symbol -> analyze(symbol, params) }
+                    computeRows(replaced, params)
                 }
                 _state.update { it.copy(symbols = replaced, rows = rows, detailLoading = false) }
             } else {
@@ -175,7 +176,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
         prefs.saveParams(params)
         viewModelScope.launch {
             val rows = withContext(Dispatchers.Default) {
-                _state.value.symbols.map { analyze(it, params) }
+                computeRows(_state.value.symbols, params)
             }
             _state.update { it.copy(params = params, rows = rows, conditionHits = null, backtest = null) }
         }
@@ -204,9 +205,14 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
             val conditions = conditionCatalog().filter { it.id in selected }.map { it.condition }
             val params = _state.value.params
             val extra = _state.value.fundamentals.items
+            val rowsByCode = _state.value.rows.associateBy { it.code }
             val hits = withContext(Dispatchers.Default) {
                 _state.value.symbols.mapNotNull { symbol ->
-                    if (matchesAll(symbol, conditions, params, extra[symbol.code])) analyze(symbol, params) else null
+                    if (matchesAll(symbol, conditions, params, extra[symbol.code])) {
+                        rowsByCode[symbol.code] ?: analyze(symbol, params)
+                    } else {
+                        null
+                    }
                 }
             }
             _state.update { it.copy(conditionHits = hits) }
@@ -222,6 +228,10 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(route = route) }
     }
 }
+
+/** 每檔的箱型狀態與品質，再填上全市場 RS 百分位。 */
+fun computeRows(symbols: List<SymbolHistory>, params: BoxParams): List<ScreenRow> =
+    withRelativeStrength(symbols.map { analyze(it, params) }, symbols)
 
 /**
  * flags.json 的資料日和行情相同時，漲跌停用它（成交原價算的）。

@@ -72,6 +72,12 @@ data class ScreenRow(
     val volumeRatio: Double?,
     val volumeConfirmed: Boolean,
     val rangePosition: Double?,
+    // 相對強弱百分位（0～100，全市場比較，見 Quality.kt）與箱型品質。
+    val rs60: Int? = null,
+    val rs120: Int? = null,
+    val boxDays: Int? = null,
+    val boxWidth: Double? = null,
+    val volumeContraction: Double? = null,
 )
 
 data class Trade(

@@ -210,6 +210,7 @@ fun analyze(symbol: SymbolHistory, params: BoxParams = BoxParams()): ScreenRow {
     val box = snap.box
     val span = if (box == null) 0.0 else box.top - box.bottom
     val position = if (box == null || span == 0.0) null else (snap.close - box.bottom) / span
+    val quality = boxQuality(symbol.bars, box)
     return ScreenRow(
         code = symbol.code,
         name = symbol.name,
@@ -225,5 +226,8 @@ fun analyze(symbol: SymbolHistory, params: BoxParams = BoxParams()): ScreenRow {
         volumeRatio = snap.volumeRatio,
         volumeConfirmed = snap.volumeConfirmed,
         rangePosition = position,
+        boxDays = quality?.days,
+        boxWidth = quality?.width,
+        volumeContraction = quality?.volumeContraction,
     )
 }
