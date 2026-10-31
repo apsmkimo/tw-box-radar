@@ -1,5 +1,6 @@
 package com.twboxradar.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,6 +34,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -157,6 +161,7 @@ fun ListScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
                     row,
                     onClick = { onOpen(row.code) },
                     membership = if (searching) membershipLabel(row.status) else null,
+                    chips = state.chips[row.code].orEmpty(),
                 )
             }
         }
@@ -191,11 +196,18 @@ private fun EmptyListMessage(state: UiState, searching: Boolean, market: String,
 }
 
 @Composable
-fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null) {
+fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null, chips: List<String> = emptyList()) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Text("${row.name} ${row.code}", fontWeight = FontWeight.SemiBold)
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("${row.name} ${row.code}", fontWeight = FontWeight.SemiBold)
+                    RiskChipRow(chips)
+                }
                 Text(marketLabel(row.market), style = MaterialTheme.typography.labelMedium)
             }
             membership?.let {
@@ -216,6 +228,30 @@ fun StockCard(row: ScreenRow, onClick: () -> Unit, membership: String? = null) {
     }
 }
 
+/** 注意／處置／漲停／跌停小標籤。紅漲綠跌，注意與處置用橘色。 */
+@Composable
+fun RiskChipRow(chips: List<String>) {
+    if (chips.isEmpty()) return
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        chips.forEach { label ->
+            val color = when {
+                label == "漲停" -> Color(0xFFC62828)
+                label == "跌停" -> Color(0xFF2E7D32)
+                else -> Color(0xFFE65100)
+            }
+            Text(
+                label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(color)
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
+            )
+        }
+    }
+}
+
 @Composable
 fun DetailScreen(state: UiState, code: String, onWatch: () -> Unit, onBacktest: () -> Unit) {
     val symbol = state.symbols.firstOrNull { it.code == code }
@@ -229,6 +265,8 @@ fun DetailScreen(state: UiState, code: String, onWatch: () -> Unit, onBacktest: 
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("${symbol.name} ${symbol.code}", style = MaterialTheme.typography.headlineSmall)
                 Text("${marketLabel(symbol.market)}　資料日 ${formatDateText(state.asOf)}")
+                RiskChipRow(state.chips[code].orEmpty())
+                riskDetail(state, code)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 Text(describePosition(row), fontWeight = FontWeight.Medium)
                 Text(boxLine(row))
                 Text("箱頂日 ${formatDate(row.topDate)}　箱底日 ${formatDate(row.bottomDate)}")
@@ -306,7 +344,9 @@ fun WatchScreen(state: UiState, onOpen: (String) -> Unit, onRetry: () -> Unit) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(rows, key = { it.code }) { row -> StockCard(row, onClick = { onOpen(row.code) }) }
+            items(rows, key = { it.code }) { row ->
+                StockCard(row, onClick = { onOpen(row.code) }, chips = state.chips[row.code].orEmpty())
+            }
         }
     }
 }
@@ -349,7 +389,9 @@ fun ConditionScreen(
             val hits = state.conditionHits
             if (hits != null) {
                 item { Text("符合 ${hits.size} 檔", fontWeight = FontWeight.Medium) }
-                items(hits, key = { it.code }) { row -> StockCard(row, onClick = { onOpen(row.code) }) }
+                items(hits, key = { it.code }) { row ->
+                    StockCard(row, onClick = { onOpen(row.code) }, chips = state.chips[row.code].orEmpty())
+                }
             }
         }
     }
@@ -370,6 +412,9 @@ fun BacktestScreen(state: UiState, code: String) {
         // Text("以收盤價模擬成交，不計手續費與稅。價格未還原除權息，區間盤的假突破會出現在交易清單。")
         Text("以還原後的收盤價模擬成交，不計手續費與稅。區間盤的假突破會出現在交易清單。")
         // SMCPKG_SUPPORT<<<CursorYYY
+        if (state.params.skipLimitUpEntry) {
+            Text("已略過收盤漲停的突破，這幾天不進場。", style = MaterialTheme.typography.bodySmall)
+        }
         Text(DISCLAIMER, style = MaterialTheme.typography.bodySmall)
         if (state.backtestLoading || state.backtest == null) {
             CircularProgressIndicator()
@@ -501,6 +546,11 @@ fun SettingsScreen(
             }
         }
         item {
+            SwitchRow("回測略過收盤漲停的突破（漲停價常無法成交）", params.skipLimitUpEntry) {
+                onParams(params.copy(skipLimitUpEntry = it))
+            }
+        }
+        item {
             SwitchRow("自選股突破／跌破提醒", state.alertsEnabled) {
                 onAlerts(it)
                 if (it) onRequestNotifications()
@@ -549,6 +599,21 @@ private fun Header(state: UiState, onRetry: (() -> Unit)? = null) {
             }
         }
     }
+}
+
+/** 個股頁的注意／處置說明。清單日期和行情不同時寫出清單日期。 */
+private fun riskDetail(state: UiState, code: String): String? {
+    val item = state.flags.flags[code] ?: return null
+    val parts = mutableListOf<String>()
+    if (item.notice) parts += "當日列入公布注意交易資訊"
+    val end = item.punishEnd
+    if (end != null) {
+        val measure = item.punishMeasure?.takeIf { it.isNotBlank() } ?: "處置"
+        parts += "處置期間 ${formatDate(item.punishStart)} 至 ${formatDate(end)}（$measure）"
+    }
+    if (parts.isEmpty()) return null
+    val dated = if (state.flags.riskAsOf.isNotEmpty()) "清單日期 ${formatDateText(state.flags.riskAsOf)}" else ""
+    return (parts + listOfNotNull(dated.ifEmpty { null })).joinToString("。")
 }
 
 private fun pct(value: Double): String = String.format(Locale.US, "%+.1f%%", value * 100.0)

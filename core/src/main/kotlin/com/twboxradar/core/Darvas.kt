@@ -146,8 +146,9 @@ fun evaluate(bars: List<Bar>, params: BoxParams = BoxParams()): Snapshot {
     return Snapshot(status, today.close, box, distanceTop, distanceBottom, ratio, confirmed)
 }
 
-fun backtest(bars: List<Bar>, params: BoxParams = BoxParams()): BacktestResult {
+fun backtest(bars: List<Bar>, params: BoxParams = BoxParams(), rawBars: List<Bar> = emptyList()): BacktestResult {
     val start = params.confirmationDays * 2 + 2
+    val limits = if (params.skipLimitUpEntry) limitMoves(bars, rawBars) else emptyList()
     if (bars.size <= start) {
         return BacktestResult(emptyList(), 0.0, null, 0.0, 0.0, 0)
     }
@@ -166,7 +167,8 @@ fun backtest(bars: List<Bar>, params: BoxParams = BoxParams()): BacktestResult {
         val close = bars[i].close
         if (!inPosition) {
             val volumeOk = !params.requireVolumeForEntry || snap.volumeConfirmed
-            if (snap.status == BoxStatus.BREAKOUT && volumeOk && snap.box != null) {
+            val limitOk = !params.skipLimitUpEntry || limits.getOrNull(i) != LimitMove.UP
+            if (snap.status == BoxStatus.BREAKOUT && volumeOk && limitOk && snap.box != null) {
                 inPosition = true
                 entryPrice = close
                 entryDate = bars[i].date

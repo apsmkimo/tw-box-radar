@@ -25,6 +25,8 @@ data class BoxParams(
     val volumeMultiple: Double = 1.5,
     val volumeAverageDays: Int = 20,
     val requireVolumeForEntry: Boolean = false,
+    /** 回測：收盤漲停的突破不進場（漲停常買不到）。預設關閉，維持原本結果。 */
+    val skipLimitUpEntry: Boolean = false,
 )
 
 data class Box(
