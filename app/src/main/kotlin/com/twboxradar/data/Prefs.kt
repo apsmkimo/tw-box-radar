@@ -2,6 +2,7 @@ package com.twboxradar.data
 
 import android.content.Context
 import com.twboxradar.core.BoxParams
+import com.twboxradar.core.local.DataSourceMode
 
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("tw_box_radar", Context.MODE_PRIVATE)
@@ -27,12 +28,10 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_LAST_ALERT_AS_OF, "") ?: ""
         set(value) = sp.edit().putString(KEY_LAST_ALERT_AS_OF, value).apply()
 
-    // SMCPKG_SUPPORT>>>CursorXXX
-    /** 空白表示 main。合併前可改成預覽分支，先下載全市場。 */
-    var dataBranch: String
-        get() = sp.getString(KEY_BRANCH, "") ?: ""
-        set(value) = sp.edit().putString(KEY_BRANCH, value.trim()).apply()
-    // SMCPKG_SUPPORT<<<CursorYYY
+    /** 資料來源：預設遠端（Cloudflare）。以前的「資料分支」設定已移除。 */
+    var dataSourceMode: DataSourceMode
+        get() = if (sp.getString(KEY_SOURCE, "") == "direct") DataSourceMode.DIRECT else DataSourceMode.REMOTE
+        set(value) = sp.edit().putString(KEY_SOURCE, if (value == DataSourceMode.DIRECT) "direct" else "remote").apply()
 
     var removeAdsOwned: Boolean
         get() = sp.getBoolean(KEY_REMOVE_ADS, false)
@@ -79,7 +78,7 @@ class Prefs(context: Context) {
         private const val KEY_NEAR = "near"
         private const val KEY_VOLUME = "volume"
         private const val KEY_VOLUME_ENTRY = "volume_entry"
-        private const val KEY_BRANCH = "data_branch"
+        private const val KEY_SOURCE = "data_source"
         private const val KEY_REMOVE_ADS = "remove_ads"
         private const val KEY_DEBUG_REMOVE_ADS = "debug_remove_ads"
         private const val KEY_APP_OPEN_AT = "app_open_at"

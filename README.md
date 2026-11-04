@@ -1,42 +1,35 @@
 # 台股箱型雷達
 
-給台股散戶看「箱型整理」與「收盤突破／跌破」的 Android App。計算在手機上完成，不呼叫付費 API，也沒有伺服器。行情由 GitHub Actions 在收盤後抓取，編成靜態 JSON 放在這個倉庫的 `docs/`，App 只下載這些檔案。
+給台股散戶看「箱型整理」與「收盤突破／跌破」的 Android App。計算在手機上完成，不呼叫付費 API。0.3.0 起 App 直接下載證交所／櫃買的**官方原始資料**（預設經由 Cloudflare Worker 轉存的原文，也可直連交易所），在手機上解析、還原除權息、算法人與營收，本機保留最近 250 個交易日，每次只下載新的交易日。不再依賴 GitHub `docs/`。
 
 資料僅供參考，不構成投資建議。介面上只用「突破箱頂」「跌破箱底」「距離箱頂還有多少」這類客觀描述，不出現買賣建議或目標價。
 
 ## 架構
 
 ```
-上市 MI_INDEX、上櫃 dailyQuotes
-        │  每個交易日各 1 次，間隔至少 2.5–3 秒
-        ▼
-pipeline/            Python 3，只使用標準庫
-data/monthly/*.jsonl 歷史來源（一個月一個檔，只追加，存成交原價）
-data/state.json      已入庫與休市日期
-data/exrights.json   證交所、櫃買的除權息因子
-data/risk.json       最新交易日的注意股、處置股（每天覆寫，不留歷史）
-data/chips/*.json    三大法人每日買賣超（一天一檔，只留最近 60 個交易日）
-data/revenue.json    月營收（每檔最近 15 個月，千元）
+證交所／櫃買官方端點（行情、三大法人、注意／處置、除權息、月營收）
         │
-        ▼
-docs/                App 下載的靜態檔（同時可當 GitHub Pages 根目錄）
-  manifest.json      資料日、檔數、是否還原權值
-  universe.json      代號、名稱、市場
-  window.json        近 180 個交易日，全市場，給清單／條件／自選
-  screens.json       預設參數下的三份清單（伺服器先算一份，列上有 limit 時表示收盤漲停／跌停；另含 rs60、rs120、boxDays、boxWidth、volumeContraction）
-  flags.json         注意、處置（含起迄日）、漲停／跌停標籤，只列有標籤的代號
-  chips.json         三大法人 5／20 日買賣超（張）、連買天數，以及最新月營收、年增、月增、是否創 12 個月新高
-  bars/{代號}.json   單檔完整歷史（還原價；有除權息時另附 raw 成交原價）
-        │
+        ├─ 遠端（預設）：worker/ Cloudflare Worker 平日 16:30／18:30／22:00 抓原文存 KV，不解析
+        │     GET /manifest、/day/YYYYMMDD（一天全部原文，gzip 約 0.6 MB）、/raw/YYYYMMDD/來源
+        └─ 直連：App 自己打同樣的官方網址，請求間隔 ≥ 3 秒、瀏覽器 User-Agent
         ▼
 Android App          Kotlin + Jetpack Compose
-  :core              純 JVM：箱型、指標、條件、回測（單元測試不需要 Android）
-  :app               畫面、下載、WorkManager 提醒
+  :core              純 JVM：官方原文解析、除權息還原、法人／營收／注意處置、本機資料庫、增量同步、
+                     箱型、指標、條件、回測（單元測試不需要 Android）
+  :app               畫面、同步、WorkManager 提醒
 ```
 
-App 的預設網址是 `https://raw.githubusercontent.com/apsmkimo/tw-box-radar/main/docs`。合併到 `main` 之後才抓得到遠端全市場資料；沒網路或網址還沒發佈時，改用 APK 內建範例。
+`pipeline/`（Python，只用標準庫）是原本的 GitHub Actions 管線，規則與 `:core/local` 相同，`data/` 是它累積的歷史。
+App 第一次安裝時從這裡匯入一次初始歷史；之後預計改成打包進 APK，並移除 `data.yml` 排程。
 
-沒有另開資料分支。雲端代理的分支名稱有固定格式，資料就跟程式放在同一個 `main`。每日工作流程會把更新 commit 回目前分支。
+## App 的資料（0.3.0 起）
+
+- **資料來源**（設定頁）：預設「遠端（Cloudflare）」；Worker 連不上、回非 2xx、或 manifest 缺需要的日子時，這次同步自動改「直連證交所／櫃買」補齊，畫面標頭會寫實際使用的來源與資料日。也可固定選直連：首次同步較久、請求太頻繁可能被交易所暫停，資料內容相同。
+- **增量同步**：只下載比本機最新一天更新的交易日。遠端看 manifest；直連從最新一天的下一個平日往後走（與 `daily.py` 相同）：過去的平日兩邊都沒有行情＝休市，今天還沒有行情＝尚未發佈、不記休市，只有一邊有＝失敗、下次再試。
+- **本機格式**（`files/store/`）：每個交易日一個 gzip 檔（只有 4 碼普通股的成交原價 OHLCV），另存每日三大法人、除權息事件、月營收（每檔 15 個月）、最新一份注意／處置清單。250 個交易日約 7–10 MB，超過就刪最舊的。
+- **還原**：本機只存成交原價，組資料時用除權息事件向後還原（`adjust.py` 同一套規則），所以新的除權息日會自動回頭調整舊 K 線。事件來自每天的 TWT49U／櫃買計算表；直連下載的日子與 Worker 缺表的日子用區間表補，另外每週用區間表核對一次最近 5 週；上市含「權」的事件再查 `TWT49UDetail` 補成交量因子。
+- **初始歷史**：本機沒有資料時先匯入一次。來源可替換（`SeedSource`）：APK 內建 `assets/seed/`（`python3 pipeline/make_seed.py --out app/src/main/assets/seed` 產生，目前尚未打包），沒有就從 GitHub `data/`（`state.json`、`monthly/*.jsonl`、`exrights.json`、`revenue.json`、`chips/`）下載約 11 MB。不用 `docs/window.json`，因為它只有 180 根已還原 K 線、沒有成交原價。
+- 全部失敗而且本機沒有資料時，顯示 APK 內建範例 `assets/sample/window.json`。
 
 ## 資料來源與限制
 

@@ -172,7 +172,7 @@ fun RadarApp(viewModel: RadarViewModel, ads: AdsController, onRequestNotificatio
                         viewModel::setAlerts,
                         { viewModel.refresh(true) },
                         onRequestNotifications,
-                        viewModel::setDataBranch,
+                        viewModel::setDataSource,
                     )
                     is Route.Detail -> DetailScreen(
                         state,

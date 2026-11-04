@@ -4,35 +4,49 @@ import android.content.Context
 import com.twboxradar.core.Bar
 import com.twboxradar.core.ChipSummary
 import com.twboxradar.core.Fundamentals
-import com.twboxradar.core.RevenueSummary
 import com.twboxradar.core.LimitMove
+import com.twboxradar.core.RevenueSummary
 import com.twboxradar.core.RiskFlags
-import com.twboxradar.core.PREVIEW_DATA_BRANCH
 import com.twboxradar.core.SymbolHistory
-import com.twboxradar.core.marketDocsUrl
-import com.twboxradar.core.normalizeDataBranch
+import com.twboxradar.core.local.BuiltMarket
+import com.twboxradar.core.local.DIRECT_LABEL
+import com.twboxradar.core.local.DataSourceMode
+import com.twboxradar.core.local.GitHubDataSeed
+import com.twboxradar.core.local.LocalStore
+import com.twboxradar.core.local.REMOTE_LABEL
+import com.twboxradar.core.local.SeedSource
+import com.twboxradar.core.local.SyncReport
+import com.twboxradar.core.local.Syncer
+import com.twboxradar.core.local.ThrottledHttp
+import com.twboxradar.core.local.UrlConnectionHttp
+import com.twboxradar.core.local.buildMarket
+import com.twboxradar.core.local.pretty
+import com.twboxradar.core.local.runSeed
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 
 data class LoadedMarket(
     val symbols: List<SymbolHistory>,
     val asOf: String,
     val sample: Boolean,
     val message: String?,
-    val sourceUrl: String = "",
+    /** 「資料來源 …　資料日 …」，畫面標頭顯示。 */
+    val sourceNote: String = "",
 )
 
-/** docs/flags.json。asOf 是行情資料日，riskAsOf 是注意／處置清單的日期。 */
+/** 注意／處置／漲跌停標籤。asOf 是行情資料日，riskAsOf 是注意／處置清單的日期。 */
 data class LoadedFlags(
     val asOf: String = "",
     val riskAsOf: String = "",
     val flags: Map<String, RiskFlags> = emptyMap(),
 )
 
-/** docs/chips.json。chipStart～chipEnd 是已累積的法人資料區間。 */
+/** 法人與營收。chipStart～chipEnd 是本機已累積的法人資料區間。 */
 data class LoadedChips(
     val asOf: String = "",
     val chipDays: Int = 0,
@@ -41,167 +55,170 @@ data class LoadedChips(
     val items: Map<String, Fundamentals> = emptyMap(),
 )
 
+/**
+ * 行情都從裝置上的本機資料來（core/local/LocalStore）。
+ *
+ * 同步：第一次先匯入初始歷史（APK 內建 assets/seed/，沒有就從 GitHub data/ 匯入一次），
+ * 之後只下載比本機最新一天更新的交易日。來源依設定：遠端（Cloudflare Worker）或直連證交所／櫃買；
+ * 遠端失敗時這次自動改直連。解析、還原、標籤與法人統計都在裝置上計算。
+ * 全部失敗而且本機沒有資料時，顯示內建範例 assets/sample/window.json。
+ */
 class MarketRepository(private val context: Context) {
-    /** 法人與營收。快取規則同 flags.json，失敗就回空的，畫面只是少這兩段。 */
-    suspend fun loadChips(force: Boolean, branch: String, asOf: String): LoadedChips =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val file = cacheFile(branch, "chips.json")
-            val cached = if (file.exists()) runCatching { parseChips(file.readText()) }.getOrNull() else null
-            if (!force && cached != null && cached.asOf == asOf && asOf.isNotEmpty()) {
-                return@withContext cached
-            }
-            try {
-                val text = http("${marketDocsUrl(branch)}/chips.json")
-                val parsed = parseChips(text)
-                file.parentFile?.mkdirs()
-                file.writeText(text)
-                parsed
-            } catch (error: Exception) {
-                cached ?: LoadedChips()
-            }
-        }
+    private val prefs = Prefs(context)
+    private val store = LocalStore(File(context.filesDir, "store"))
+
+    private fun seeds(): List<SeedSource> = listOf(
+        AssetSeed(context),
+        GitHubDataSeed(UrlConnectionHttp),
+    )
 
     /**
-     * 注意／處置／漲跌停標籤。跟 window.json 一樣先比對 asOf 再決定要不要重抓。
-     * 下載失敗用快取；連快取都沒有就回空的，畫面只是不顯示標籤。
+     * 同步後組出全市場。force＝使用者按重新下載；否則 10 分鐘內同步過就直接用本機資料。
      */
-    suspend fun loadFlags(force: Boolean, branch: String, asOf: String): LoadedFlags =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val file = cacheFile(branch, "flags.json")
-            val cached = if (file.exists()) runCatching { parseFlags(file.readText()) }.getOrNull() else null
-            if (!force && cached != null && cached.asOf == asOf && asOf.isNotEmpty()) {
-                return@withContext cached
+    suspend fun loadMarket(force: Boolean, onProgress: (String) -> Unit = {}): LoadedMarket = withContext(Dispatchers.IO) {
+        lock.withLock {
+            cleanupLegacyCache()
+            val outcome = syncLocked(force, onProgress)
+            val built = runCatching { buildMarket(store) }.getOrNull()
+            if (built == null) {
+                cache = null
+                return@withLock sampleMarket(outcome.message ?: "本機還沒有資料")
             }
-            try {
-                val text = http("${marketDocsUrl(branch)}/flags.json")
-                val parsed = parseFlags(text)
-                file.parentFile?.mkdirs()
-                file.writeText(text)
-                parsed
-            } catch (error: Exception) {
-                cached ?: LoadedFlags()
-            }
+            cache = built
+            LoadedMarket(
+                symbols = built.symbols(includeRaw = false),
+                asOf = built.asOf,
+                sample = false,
+                message = outcome.message,
+                sourceNote = sourceNote(outcome.label, built),
+            )
         }
+    }
 
+    /** 注意／處置／漲跌停，來自最近一次 loadMarket 組好的結果。 */
+    fun loadFlags(asOf: String): LoadedFlags {
+        val built = cache ?: return LoadedFlags()
+        if (built.asOf != asOf) return LoadedFlags()
+        return LoadedFlags(built.asOf, built.riskAsOf, built.flags)
+    }
 
-    // SMCPKG_SUPPORT>>>CursorXXX
-    // suspend fun loadMarket(force: Boolean): LoadedMarket
-    // 網址以前寫死 BuildConfig.DATA_BASE_URL（main）。main 還沒合併時會 404，只能看範例。
-    suspend fun loadMarket(force: Boolean, branch: String): LoadedMarket = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val base = marketDocsUrl(branch)
-        val cacheManifest = cacheFile(branch, "manifest.json")
-        val cacheWindow = cacheFile(branch, "window.json")
-        try {
-            val manifestText = http("$base/manifest.json")
-            val manifest = JSONObject(manifestText)
-            val asOf = manifest.optString("asOf")
-            val cachedAsOf = if (cacheManifest.exists()) JSONObject(cacheManifest.readText()).optString("asOf") else ""
-            val windowText = if (!force && cachedAsOf == asOf && cacheWindow.exists()) {
-                cacheWindow.readText()
-            } else {
-                http("$base/window.json").also { body ->
-                    cacheManifest.parentFile?.mkdirs()
-                    cacheManifest.writeText(manifestText)
-                    cacheWindow.writeText(body)
-                }
+    fun loadChips(asOf: String): LoadedChips {
+        val built = cache ?: return LoadedChips()
+        if (built.asOf != asOf) return LoadedChips()
+        return LoadedChips(built.asOf, built.chipDays, built.chipStart, built.chipEnd, built.fundamentals)
+    }
+
+    /** 個股頁：帶成交原價的完整本機歷史（約 250 個交易日）。 */
+    suspend fun loadHistory(code: String, fallback: SymbolHistory?): SymbolHistory? = withContext(Dispatchers.IO) {
+        cache?.symbol(code, includeRaw = true) ?: fallback
+    }
+
+    /**
+     * 背景提醒用：先同步，再回傳本機最新資料日。
+     * 同步中斷而且沒有拿到任何新資料時丟出例外，讓 WorkManager 稍後重試。
+     */
+    suspend fun fetchAsOf(): String = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val outcome = syncLocked(force = true, onProgress = {})
+            val report = outcome.report
+            if (report != null && report.error != null && report.newDays.isEmpty()) {
+                throw IllegalStateException(report.error)
             }
-            LoadedMarket(parseWindow(windowText), asOf, sample = false, message = null, sourceUrl = base)
+            val latest = store.latestDay() ?: throw IllegalStateException(outcome.message ?: "本機沒有資料")
+            "%08d".format(latest)
+        }
+    }
+
+    /** 背景提醒用：自選股的還原歷史（含成交原價）。 */
+    suspend fun loadSymbols(codes: Collection<String>): List<SymbolHistory> = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val built = buildMarket(store) ?: throw IllegalStateException("本機沒有資料")
+            cache = built
+            codes.sorted().mapNotNull { built.symbol(it, includeRaw = true) }
+        }
+    }
+
+    /** 本機資料大小，給設定頁顯示。 */
+    fun storeSummary(): String {
+        val days = store.tradingDays()
+        if (days.isEmpty()) return "本機還沒有資料"
+        val mb = store.sizeBytes() / 1024.0 / 1024.0
+        return "本機 ${days.size} 個交易日（${pretty(days.first())}～${pretty(days.last())}），約 ${"%.1f".format(mb)} MB"
+    }
+
+    private class Outcome(val report: SyncReport?, val label: String, val message: String?)
+
+    private fun syncLocked(force: Boolean, onProgress: (String) -> Unit): Outcome {
+        val mode = prefs.dataSourceMode
+        val state = store.state()
+        val recent = System.currentTimeMillis() - state.lastSyncAt < RESYNC_MS
+        if (!force && recent && store.latestDay() != null) {
+            return Outcome(null, state.lastSource.ifEmpty { label(mode) }, state.lastMessage.ifEmpty { null })
+        }
+        val messages = mutableListOf<String>()
+        val seedError = runSeed(store, seeds(), onProgress)
+        if (seedError != null) messages += "$seedError，下次同步再試。"
+        val report = try {
+            Syncer(
+                store = store,
+                remoteHttp = UrlConnectionHttp,
+                direct = ThrottledHttp(UrlConnectionHttp),
+                progress = onProgress,
+            ).sync(mode, forceSnapshots = force)
         } catch (error: Exception) {
-            val reason = error.message ?: error.javaClass.simpleName
-            if (cacheWindow.exists()) {
-                val asOf = if (cacheManifest.exists()) JSONObject(cacheManifest.readText()).optString("asOf") else ""
-                LoadedMarket(
-                    parseWindow(cacheWindow.readText()),
-                    asOf,
-                    sample = false,
-                    message = "更新失敗（$reason）。顯示這個分支上次下載的資料。",
-                    sourceUrl = base,
-                )
-            } else {
-                val text = context.assets.open("sample/window.json").bufferedReader().use { it.readText() }
-                val hint = if (normalizeDataBranch(branch) == "main") {
-                    "main 要等合併才有檔案。到「設定」把資料分支改成 $PREVIEW_DATA_BRANCH，再按重試，就可以先看全市場。"
-                } else {
-                    "請確認分支名稱後按重試。"
-                }
-                LoadedMarket(
-                    parseWindow(text),
-                    JSONObject(text).optString("asOf"),
-                    sample = true,
-                    message = "連不到 $base/manifest.json（$reason）。目前顯示內建範例。$hint",
-                    sourceUrl = base,
-                )
-            }
+            messages += "同步失敗（${error.message?.take(80) ?: error.javaClass.simpleName}），先顯示本機已有的資料。"
+            null
         }
+        if (report != null) {
+            if (report.fallbackReason != null && report.usedDirect) {
+                messages += "${report.fallbackReason}，這次改用$DIRECT_LABEL。"
+            } else if (report.fallbackReason != null) {
+                messages += "${report.fallbackReason}。"
+            }
+            report.error?.let { messages += "$it。先顯示本機已有的資料。" }
+        }
+        val label = report?.sourceLabel ?: label(mode)
+        val message = messages.joinToString("\n").ifEmpty { null }
+        store.saveState(store.state().copy(lastSource = label, lastMessage = message ?: ""))
+        return Outcome(report, label, message)
     }
 
-    // suspend fun loadHistory(code: String, fallback: SymbolHistory?): SymbolHistory?
-    suspend fun loadHistory(code: String, fallback: SymbolHistory?, branch: String): SymbolHistory? =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val file = cacheFile(branch, "bars/$code.json")
-            try {
-                val text = http("${marketDocsUrl(branch)}/bars/$code.json")
-                file.parentFile?.mkdirs()
-                file.writeText(text)
-                parseSymbol(JSONObject(text))
-            } catch (error: Exception) {
-                when {
-                    file.exists() -> parseSymbol(JSONObject(file.readText()))
-                    else -> fallback
-                }
-            }
-        }
+    private fun label(mode: DataSourceMode) = if (mode == DataSourceMode.REMOTE) REMOTE_LABEL else DIRECT_LABEL
 
-    /** 只抓 manifest.json（約 1KB）取得資料日。失敗時丟出例外。 */
-    suspend fun fetchAsOf(branch: String): String =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            JSONObject(http("${marketDocsUrl(branch)}/manifest.json")).optString("asOf")
-        }
-
-    /**
-     * 只下載自選股的單檔歷史（bars/{代號}.json），不下載 16MB 的 window.json。
-     * 任何一檔抓不到就丟出例外，讓呼叫端稍後重試，避免用舊快取發出錯誤通知。
-     */
-    suspend fun loadSymbols(codes: Collection<String>, branch: String): List<SymbolHistory> =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            codes.sorted().map { code ->
-                val text = http("${marketDocsUrl(branch)}/bars/$code.json")
-                val file = cacheFile(branch, "bars/$code.json")
-                file.parentFile?.mkdirs()
-                file.writeText(text)
-                parseSymbol(JSONObject(text))
-            }
-        }
-
-    private fun cacheFile(branch: String, name: String): File {
-        val folder = normalizeDataBranch(branch).replace('/', '_')
-        return File(context.filesDir, "market/$folder/$name")
+    private fun sourceNote(label: String, built: BuiltMarket): String {
+        val day = built.asOf.toIntOrNull()?.let { pretty(it) } ?: built.asOf
+        return "資料來源 $label　資料日 $day　本機 ${built.tradingDays} 個交易日"
     }
-    // SMCPKG_SUPPORT<<<CursorYYY
 
-    private fun http(url: String): String {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20_000
-            readTimeout = 180_000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "tw-box-radar-android/0.1")
-            setRequestProperty("Accept", "application/json")
-        }
-        try {
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                // SMCPKG_SUPPORT>>>CursorXXX
-                // throw IllegalStateException("HTTP $code")
-                throw IllegalStateException("HTTP $code $url")
-                // SMCPKG_SUPPORT<<<CursorYYY
-            }
-            return connection.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            connection.disconnect()
-        }
+    private fun sampleMarket(reason: String): LoadedMarket {
+        val text = context.assets.open("sample/window.json").bufferedReader().use { it.readText() }
+        return LoadedMarket(
+            symbols = parseWindow(text),
+            asOf = JSONObject(text).optString("asOf"),
+            sample = true,
+            message = "$reason\n目前顯示內建範例。請確認網路後按重試。",
+            sourceNote = "內建範例",
+        )
+    }
+
+    /** 0.2.x 的 GitHub docs 快取（window.json 約 16 MB）已不再使用，刪掉。 */
+    private fun cleanupLegacyCache() {
+        val legacy = File(context.filesDir, "market")
+        if (legacy.exists()) legacy.deleteRecursively()
+    }
+
+    companion object {
+        /** UI 與背景提醒共用同一份本機資料，同一時間只允許一個同步。 */
+        private val lock = Mutex()
+
+        @Volatile
+        private var cache: BuiltMarket? = null
+
+        private const val RESYNC_MS = 10 * 60 * 1000L
     }
 }
 
+/** 內建範例（assets/sample/window.json）的格式，與以前的 docs/window.json 相同。 */
 fun parseWindow(text: String): List<SymbolHistory> {
     val root = JSONObject(text)
     val array = root.getJSONArray("symbols")
@@ -213,10 +230,6 @@ fun parseWindow(text: String): List<SymbolHistory> {
 }
 
 fun parseSymbol(obj: JSONObject): SymbolHistory {
-    // SMCPKG_SUPPORT>>>CursorXXX
-    // val barsJson = obj.getJSONArray("bars")
-    // val bars = buildList { ... 只讀 bars ... }
-    // return SymbolHistory(code = obj.getString("c"), name = obj.getString("n"), market = obj.getString("m"), bars = bars)
     val bars = readBars(obj.getJSONArray("bars"))
     val rawBars = if (obj.has("raw") && !obj.isNull("raw")) readBars(obj.getJSONArray("raw")) else emptyList()
     return SymbolHistory(
@@ -226,7 +239,6 @@ fun parseSymbol(obj: JSONObject): SymbolHistory {
         bars = bars,
         rawBars = rawBars,
     )
-    // SMCPKG_SUPPORT<<<CursorYYY
 }
 
 private fun readBars(barsJson: JSONArray): List<Bar> {
@@ -247,6 +259,7 @@ private fun readBars(barsJson: JSONArray): List<Bar> {
     }
 }
 
+/** 舊版 docs/flags.json 格式。現在標籤由本機計算，保留給測試與除錯。 */
 fun parseFlags(text: String): LoadedFlags {
     val root = JSONObject(text)
     val items = root.optJSONObject("flags") ?: JSONObject()
@@ -276,6 +289,7 @@ fun parseFlags(text: String): LoadedFlags {
     return LoadedFlags(root.optString("asOf"), root.optString("riskAsOf"), map)
 }
 
+/** 舊版 docs/chips.json 格式。現在由本機計算，保留給測試與除錯。 */
 fun parseChips(text: String): LoadedChips {
     val root = JSONObject(text)
     val chipDays = root.optInt("chipDays", 0)

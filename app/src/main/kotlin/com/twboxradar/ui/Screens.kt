@@ -29,6 +29,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -61,7 +62,6 @@ import com.twboxradar.core.BoxParams
 import com.twboxradar.core.BoxStatus
 import com.twboxradar.core.DISCLAIMER
 import com.twboxradar.core.ListSlot
-import com.twboxradar.core.PREVIEW_DATA_BRANCH
 import com.twboxradar.core.ScreenRow
 import com.twboxradar.core.SymbolHistory
 import com.twboxradar.core.Trade
@@ -72,10 +72,9 @@ import com.twboxradar.core.insertAdSlots
 import com.twboxradar.core.describeQuality
 import com.twboxradar.core.RowSort
 import com.twboxradar.core.describeRevenue
-import com.twboxradar.core.marketDocsUrl
 import com.twboxradar.core.marketLabel
 import com.twboxradar.core.membershipLabel
-import com.twboxradar.core.normalizeDataBranch
+import com.twboxradar.core.local.DataSourceMode
 import com.twboxradar.core.visibleRows
 import java.util.Locale
 
@@ -261,7 +260,7 @@ private fun EmptyListMessage(state: UiState, searching: Boolean, market: String,
         Text(text)
         if (state.sample) {
             Text(
-                "目前是內建範例，只有少數股票。到「設定」把資料分支改成 $PREVIEW_DATA_BRANCH 並重新下載，才能查全市場。",
+                "目前是內建範例，只有少數股票。確認網路後按重試，下載全市場資料。",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -478,7 +477,7 @@ fun ConditionScreen(
                 Text("勾選的條件全部同時成立（而且）才會列入結果。")
                 Text("例如：突破箱頂，而且收盤站上 20 日均線，而且 KD 黃金交叉。")
                 Text(
-                    "法人與營收條件需要下載 chips.json；法人資料從 ${formatDateText(state.fundamentals.chipStart).ifEmpty { "開始累積那天" }} 起算，沒有資料的股票不列入。",
+                    "法人與營收條件需要本機的法人與營收資料；法人資料從 ${formatDateText(state.fundamentals.chipStart).ifEmpty { "開始累積那天" }} 起算，沒有資料的股票不列入。",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -573,49 +572,37 @@ fun SettingsScreen(
     onAlerts: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onRequestNotifications: () -> Unit,
-    onBranch: (String) -> Unit,
+    onSource: (DataSourceMode) -> Unit,
 ) {
     val params = state.params
-    var draft by rememberSaveable { mutableStateOf(state.dataBranch) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Header(state, onRefresh) }
         item { Text("資料來源", style = MaterialTheme.typography.titleMedium) }
         item {
-            Text("合併到 main 之後，空白分支會自動讀全市場。合併前 main 沒有檔案，可先改成這次更新的分支。")
-        }
-        item {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("資料分支，空白表示 main") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { onBranch(draft) }),
-            )
-        }
-        item {
-            Text(
-                "目前使用 ${normalizeDataBranch(state.dataBranch)}",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Text(marketDocsUrl(state.dataBranch), style = MaterialTheme.typography.bodySmall)
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = {
-                    draft = ""
-                    onBranch("")
-                }) { Text("改回 main") }
-                TextButton(onClick = {
-                    draft = PREVIEW_DATA_BRANCH
-                    onBranch(PREVIEW_DATA_BRANCH)
-                }) { Text("這次更新的分支") }
+            Column {
+                SourceOption(
+                    title = "遠端（Cloudflare）",
+                    detail = "預設。收盤後由雲端排程抓官方原始資料，App 一次下載一整天（約 0.6 MB）。遠端失敗時會自動改直連。",
+                    selected = state.dataSource == DataSourceMode.REMOTE,
+                    enabled = !state.loading,
+                ) { onSource(DataSourceMode.REMOTE) }
+                SourceOption(
+                    title = "直連證交所／櫃買",
+                    detail = "App 自己向證交所、櫃買中心下載，每個請求間隔 3 秒以上。首次同步較久、請求太頻繁可能被交易所暫停，資料內容相同。",
+                    selected = state.dataSource == DataSourceMode.DIRECT,
+                    enabled = !state.loading,
+                ) { onSource(DataSourceMode.DIRECT) }
             }
         }
         item {
-            Button(onClick = { onBranch(draft) }, enabled = !state.loading) {
-                Text(if (state.loading) "更新中" else "用這個分支並重新下載")
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "解析、除權息還原、法人與營收統計都在手機上計算，本機保留最近 250 個交易日，每次只下載新的交易日。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (state.storeSummary.isNotEmpty()) {
+                    Text(state.storeSummary, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         item { Text("箱型參數", style = MaterialTheme.typography.titleMedium) }
@@ -676,6 +663,17 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun SourceOption(title: String, detail: String, selected: Boolean, enabled: Boolean, onSelect: () -> Unit) {
+    Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
+        RadioButton(selected = selected, onClick = onSelect, enabled = enabled)
+        Column(Modifier.weight(1f).padding(top = 12.dp)) {
+            Text(title)
+            Text(detail, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
 private fun SliderField(label: String, value: Float, min: Float, max: Float, onChange: (Float) -> Unit) {
     var local by androidx.compose.runtime.remember(value) { mutableFloatStateOf(value) }
     Column {
@@ -702,6 +700,11 @@ private fun Header(state: UiState, onRetry: (() -> Unit)? = null) {
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("資料日 ${formatDateText(state.asOf)}　${state.symbols.size} 檔", style = MaterialTheme.typography.labelLarge)
         if (state.sample) Text("目前是內建範例", color = MaterialTheme.colorScheme.primary)
+        if (state.loading && state.progress != null) {
+            Text("同步中：${state.progress}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        } else if (state.sourceNote.isNotEmpty() && !state.sample) {
+            Text(state.sourceNote, style = MaterialTheme.typography.bodySmall)
+        }
         state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         if (onRetry != null && state.message != null) {
             Button(onClick = onRetry, enabled = !state.loading) {

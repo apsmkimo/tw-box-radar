@@ -33,23 +33,22 @@ class RadarWorker(
         val prefs = Prefs(applicationContext)
         if (!prefs.alertsEnabled || prefs.watchlist.isEmpty()) return Result.success()
         val repository = MarketRepository(applicationContext)
-        val branch = prefs.dataBranch
 
-        // 先只看 manifest（約 1KB）。資料日沒變就不下載任何行情。
+        // 先增量同步（只下載本機沒有的交易日），再看本機最新資料日。資料日沒變就不重算、不通知。
         val asOf = try {
-            repository.fetchAsOf(branch)
+            repository.fetchAsOf()
         } catch (error: Exception) {
             return Result.retry()
         }
         if (asOf.isBlank()) return Result.retry()
         if (asOf == prefs.lastAlertAsOf) {
-            // 收盤資料可能還沒發佈（排程 16:30／18:30）。交易日晚上稍後再試。
+            // 收盤資料可能還沒發佈（Worker 排程 16:30／18:30／22:00）。交易日晚上稍後再試。
             return if (shouldWaitForToday(asOf)) Result.retry() else Result.success()
         }
 
         val watched = prefs.watchlist
         val symbols = try {
-            repository.loadSymbols(watched, branch)
+            repository.loadSymbols(watched)
         } catch (error: Exception) {
             return Result.retry()
         }

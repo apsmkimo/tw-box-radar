@@ -16,6 +16,7 @@ import com.twboxradar.core.conditionCatalog
 import com.twboxradar.core.lastLimitMove
 import com.twboxradar.core.riskChips
 import com.twboxradar.core.withRelativeStrength
+import com.twboxradar.core.local.DataSourceMode
 import com.twboxradar.data.LoadedChips
 import com.twboxradar.data.LoadedFlags
 import com.twboxradar.core.matchesAll
@@ -56,7 +57,12 @@ data class UiState(
     val detailLoading: Boolean = false,
     val backtest: BacktestResult? = null,
     val backtestLoading: Boolean = false,
-    val dataBranch: String = "",
+    val dataSource: DataSourceMode = DataSourceMode.REMOTE,
+    /** 「資料來源 …　資料日 …」。 */
+    val sourceNote: String = "",
+    /** 同步中的進度文字（第一次匯入歷史、直連下載時比較久）。 */
+    val progress: String? = null,
+    val storeSummary: String = "",
     // 代號 → 標籤（注意、處置至 MM/DD、漲停、跌停）。沒有標籤的代號不在表裡。
     val chips: Map<String, List<String>> = emptyMap(),
     val flags: LoadedFlags = LoadedFlags(),
@@ -73,7 +79,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
             watchlist = prefs.watchlist,
             disclaimerAccepted = prefs.disclaimerAccepted,
             alertsEnabled = prefs.alertsEnabled,
-            dataBranch = prefs.dataBranch,
+            dataSource = prefs.dataSourceMode,
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -84,26 +90,19 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refresh(force: Boolean = true) {
         viewModelScope.launch {
-            _state.update { it.copy(loading = true) }
-            // SMCPKG_SUPPORT>>>CursorXXX
-            // val loaded = repository.loadMarket(force)
-            val loaded = repository.loadMarket(force, _state.value.dataBranch)
-            // SMCPKG_SUPPORT<<<CursorYYY
+            _state.update { it.copy(loading = true, progress = null) }
+            val loaded = repository.loadMarket(force) { text -> _state.update { it.copy(progress = text) } }
             val params = _state.value.params
             val rows = withContext(Dispatchers.Default) { computeRows(loaded.symbols, params) }
-            val flags = if (loaded.sample) {
-                LoadedFlags()
-            } else {
-                repository.loadFlags(force, _state.value.dataBranch, loaded.asOf)
-            }
+            val flags = if (loaded.sample) LoadedFlags() else repository.loadFlags(loaded.asOf)
             val chips = withContext(Dispatchers.Default) { buildChips(loaded.symbols, flags, loaded.asOf) }
-            val fundamentals = if (loaded.sample) {
-                LoadedChips()
-            } else {
-                repository.loadChips(force, _state.value.dataBranch, loaded.asOf)
-            }
+            val fundamentals = if (loaded.sample) LoadedChips() else repository.loadChips(loaded.asOf)
+            val summary = withContext(Dispatchers.IO) { repository.storeSummary() }
             _state.update {
                 it.copy(
+                    progress = null,
+                    sourceNote = loaded.sourceNote,
+                    storeSummary = summary,
                     fundamentals = fundamentals,
                     chips = chips,
                     flags = flags,
@@ -134,10 +133,7 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _state.update { it.copy(detailLoading = true) }
             val current = _state.value.symbols.firstOrNull { it.code == code }
-            // SMCPKG_SUPPORT>>>CursorXXX
-            // val full = repository.loadHistory(code, current)
-            val full = repository.loadHistory(code, current, _state.value.dataBranch)
-            // SMCPKG_SUPPORT<<<CursorYYY
+            val full = repository.loadHistory(code, current)
             if (full != null) {
                 val params = _state.value.params
                 val replaced = _state.value.symbols.map { if (it.code == code) full else it }
@@ -193,9 +189,10 @@ class RadarViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(alertsEnabled = enabled) }
     }
 
-    fun setDataBranch(branch: String) {
-        prefs.dataBranch = branch.trim()
-        _state.update { it.copy(dataBranch = prefs.dataBranch) }
+    fun setDataSource(mode: DataSourceMode) {
+        if (mode == _state.value.dataSource) return
+        prefs.dataSourceMode = mode
+        _state.update { it.copy(dataSource = mode) }
         refresh(force = true)
     }
 
