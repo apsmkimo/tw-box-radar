@@ -18,7 +18,7 @@ Cloudflare Workers（免費方案）的盤後原始資料收集器，取代 GitH
 
 ## 部署
 
-Cloudflare Dashboard → Workers & Pages → 連結 GitHub 的這個 repo，**Root directory 設為 `worker`**，
+Cloudflare Dashboard → Workers & Pages → 連結 GitHub 的這個 repo，**Root directory 設為 `worker`**（設錯會把 `docs/` 當靜態網站部署），
 Deploy command `npx wrangler deploy`。KV 命名空間第一次部署時會自動建立。
 
 ## 測試
