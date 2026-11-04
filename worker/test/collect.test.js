@@ -59,5 +59,23 @@ test("collect stores raw, manifest, and serves day bundle", async () => {
   urls.length = 0;
   await collect(env, new Date("2026-11-04T10:30:00Z"), fakeFetch(urls), async () => {});
   assert.ok(urls.every((u) => !u.includes("date=20261103")));
-  assert.ok(!urls.some((u) => u.includes("MI_INDEX")));
+  assert.ok(!urls.some((u) => u.includes("MI_INDEX?date=20261104")));
+});
+
+test("budget caps requests and fetches today first", async () => {
+  const env = { RAW: new MemKV() };
+  const urls = [];
+  const m = await collect(env, new Date("2026-11-04T08:30:00Z"), fakeFetch(urls), async () => {});
+  assert.ok(urls.length <= 30);
+  assert.ok(urls[0].includes("20261104"));
+  assert.equal(m.latest, "20261104");
+  assert.equal(m.days["20261028"], undefined); // 留給下一次排程
+});
+
+test("http error is not retried", async () => {
+  const env = { RAW: new MemKV() };
+  let calls = 0;
+  const m = await collect(env, new Date("2026-11-04T08:30:00Z"), async () => { calls++; return new Response("no", { status: 403 }); }, async () => {});
+  assert.ok(calls <= 30);
+  assert.equal(m.latest, null);
 });
