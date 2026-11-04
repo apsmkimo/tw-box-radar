@@ -12,6 +12,7 @@ const UA = "Mozilla/5.0 (compatible; tw-box-radar-collector/1.0; +https://github
 const GAP_MS = 2500; // 證交所對連續請求會封 IP，每次間隔幾秒。
 const TTL_SECONDS = 60 * 60 * 24 * 320; // 約 10.5 個月後自動過期（每天約 2.6 MB，免費 KV 只有 1 GB）。
 const LOOKBACK_WEEKDAYS = 5; // 每次也補最近幾個平日缺的行情。
+const MAX_FETCHES = 30; // 免費方案每次最多 50 個對外請求；先抓今天，舊的留給下一次排程。
 
 export const SOURCES = {
   // 行情：兩邊都有才算完整的交易日。
@@ -95,19 +96,26 @@ export async function collect(env, now, fetcher = fetch, sleep = defaultSleep) {
   const manifest = await readManifest(env);
   const targets = recentWeekdays(today, LOOKBACK_WEEKDAYS).filter((d) => !hasQuotes(manifest, d));
   if (!targets.includes(today) && isWeekday(today)) targets.push(today); // 今天的快照類來源每次都更新
+  targets.reverse(); // 新的先抓
   let first = true;
   const pause = async () => {
     if (!first) await sleep(GAP_MS);
     first = false;
   };
+  const budget = { left: MAX_FETCHES };
   for (const day of targets) {
     const have = new Set(manifest.days[day] ?? []);
     for (const [source, build] of Object.entries(SOURCES)) {
       if (TODAY_ONLY.has(source) && day !== today) continue;
       if (have.has(source) && !TODAY_ONLY.has(source) && source !== "twse_notice") continue;
+      if (budget.left <= 0) break;
       await pause();
-      const body = await download(fetcher, build(day));
-      if (body == null || !looksUsable(source, body)) continue;
+      const body = await download(fetcher, build(day), budget, `${day} ${source}`);
+      if (body == null) continue;
+      if (!looksUsable(source, body)) {
+        console.log(`unusable ${day} ${source}: ${new TextDecoder().decode(body.subarray(0, 100))}`);
+        continue;
+      }
       await env.RAW.put(key(day, source), body, { expirationTtl: TTL_SECONDS });
       have.add(source);
     }
@@ -122,17 +130,20 @@ export async function collect(env, now, fetcher = fetch, sleep = defaultSleep) {
   return manifest;
 }
 
-async function download(fetcher, url) {
-  for (let attempt = 0; attempt < 2; attempt++) {
+async function download(fetcher, url, budget, label) {
+  for (let attempt = 0; attempt < 2 && budget.left > 0; attempt++) {
+    budget.left--;
     try {
       const res = await fetcher(url, { headers: { "User-Agent": UA, Accept: "application/json,*/*" } });
-      if (res.ok) {
-        // 保持原始位元組，不整份解碼（省 CPU）；只去掉 UTF-8 BOM。
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        return bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
+      if (!res.ok) {
+        console.log(`http ${res.status} ${label}`);
+        return null; // 被擋或錯誤頁，重試也一樣，留給下一次排程
       }
-    } catch (_) {
-      // 網路錯誤，重試一次
+      // 保持原始位元組，不整份解碼（省 CPU）；只去掉 UTF-8 BOM。
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      return bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
+    } catch (err) {
+      console.log(`fetch error ${label}: ${err}`); // 網路錯誤，重試一次
     }
   }
   return null;
