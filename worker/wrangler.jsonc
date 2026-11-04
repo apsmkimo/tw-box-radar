@@ -1,0 +1,12 @@
+{
+  // 台股盤後原始資料收集器。Cloudflare Workers Builds 從這個資料夾部署（Root directory: worker）。
+  "name": "tw-box-radar-collector",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  // 16:30、18:30、22:00 台北時間的平日。免費帳號最多 5 個排程。
+  "triggers": { "crons": ["30 8 * * 1-5", "30 10 * * 1-5", "0 14 * * 1-5"] },
+  // 不填 id，第一次部署時由 Wrangler 自動建立 KV 命名空間。
+  "kv_namespaces": [{ "binding": "RAW" }],
+  "observability": { "enabled": true }
+}
